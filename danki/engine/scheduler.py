@@ -24,13 +24,16 @@ class Scheduler:
 
     def build_session(self, deck_ids: list[str], now_ts: Optional[int] = None,
                       max_new: Optional[int] = None, max_rev: Optional[int] = None) -> list[dict]:
-        """Return a list of cards for today's session."""
+        """Return a list of cards for today's session with daily limits."""
         if now_ts is None:
             now_ts = int(time.time())
             
         if not deck_ids:
             return []
             
+        from ..utils.study_time import study_time
+        study_date = study_time.get_study_date(now_ts)
+        
         # Get all due cards
         cards = self.db.get_cards_for_review(deck_ids, now_ts)
         
@@ -39,14 +42,57 @@ class Scheduler:
         learning_cards = [c for c in cards if c['state'] == 'learning']
         review_cards = [c for c in cards if c['state'] == 'review']
         
-        # Apply limits
-        if max_new is not None:
-            new_cards = new_cards[:max_new]
-        if max_rev is not None:
-            review_cards = review_cards[:max_rev]
+        # Apply daily limits per deck
+        filtered_new_cards = []
+        filtered_review_cards = []
+        
+        # Group cards by deck
+        cards_by_deck = {}
+        for card in new_cards + review_cards:
+            deck_id = card.get('deck_id')
+            if not deck_id:
+                # Get deck_id from note if not directly available
+                note_row = self.db.conn.execute("SELECT deck_id FROM notes WHERE id = ?", (card['note_id'],)).fetchone()
+                deck_id = note_row['deck_id'] if note_row else None
+                
+            if deck_id:
+                if deck_id not in cards_by_deck:
+                    cards_by_deck[deck_id] = {'new': [], 'review': []}
+                
+                if card in new_cards:
+                    cards_by_deck[deck_id]['new'].append(card)
+                else:
+                    cards_by_deck[deck_id]['review'].append(card)
+        
+        # Apply daily limits for each deck
+        for deck_id, deck_cards in cards_by_deck.items():
+            # Get deck preferences and daily stats
+            prefs = self.db.get_deck_preferences(deck_id)
+            daily_stats = self.db.get_daily_stats(deck_id, study_date)
             
+            # Calculate remaining daily allowance
+            new_per_day = prefs.get('new_per_day', 10)
+            rev_per_day = prefs.get('rev_per_day', 100)
+            
+            new_remaining = max(0, new_per_day - daily_stats['new_studied'])
+            rev_remaining = max(0, rev_per_day - daily_stats['rev_studied'])
+            
+            # Apply global max limits if provided
+            if max_new is not None:
+                new_remaining = min(new_remaining, max_new - len(filtered_new_cards))
+            if max_rev is not None:
+                rev_remaining = min(rev_remaining, max_rev - len(filtered_review_cards))
+            
+            # Add cards up to daily limits
+            filtered_new_cards.extend(deck_cards['new'][:new_remaining])
+            filtered_review_cards.extend(deck_cards['review'][:rev_remaining])
+        
+        # Learning cards are always included (they're urgent)
+        # But filter out learning cards that would exceed today's session if they're new→learning transitions
+        filtered_learning_cards = learning_cards
+        
         # Order: learning first (most urgent), then new, then review
-        session = learning_cards + new_cards + review_cards
+        session = filtered_learning_cards + filtered_new_cards + filtered_review_cards
         
         return session
 
@@ -78,6 +124,30 @@ class Scheduler:
         self.db.log_review(
             card_id, rating, answer_ms, prev_state, prev_interval, new_interval
         )
+        
+        # Update daily stats for the deck
+        from ..utils.study_time import study_time
+        study_date = study_time.get_study_date(now_ts)
+        
+        # Get deck_id for this card
+        note_row = self.db.conn.execute("SELECT deck_id FROM notes WHERE id = ?", (card['note_id'],)).fetchone()
+        if note_row:
+            deck_id = note_row['deck_id']
+            
+            # Determine if this counts as a new card or review for daily stats
+            new_count = 0
+            rev_count = 0
+            
+            if prev_state == 'new':
+                # This was a new card being studied for first time
+                new_count = 1
+            elif prev_state in ['learning', 'review']:
+                # This was a review/re-review
+                rev_count = 1
+                
+            # Increment daily stats
+            if new_count > 0 or rev_count > 0:
+                self.db.increment_daily_stats(deck_id, study_date, new_count, rev_count)
 
     def _get_card(self, card_id: str) -> Optional[dict]:
         """Get card by ID."""
@@ -97,8 +167,8 @@ class Scheduler:
         current_lapses = card['lapses']
         current_step = card['step_index']
         
-        # Learning steps in minutes: [10, 1440] (10 min, 1 day)
-        LEARNING_STEPS = [10, 1440]
+        # Learning steps in minutes: [1, 10] (1 min, 10 min) - Anki default for immediate re-learning
+        LEARNING_STEPS = [1, 10]
         
         if current_state == 'new':
             # New card transitions

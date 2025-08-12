@@ -8,9 +8,10 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                               QLabel, QTextEdit, QComboBox, QProgressBar,
                               QCheckBox, QLineEdit, QMessageBox, QFrame)
 from PySide6.QtCore import Qt, Signal, QThread
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QIcon
 
 from ...utils.config import config
+from ..dialogs.preferences import PreferencesDialog
 
 
 class GeminiWorker(QThread):
@@ -211,45 +212,16 @@ class AddCardsScreen(QWidget):
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
         
-        layout.addSpacing(15)
+        # Header with title and settings
+        header_layout = QHBoxLayout()
+        header_layout.addStretch()
         
-        # API Key section
-        api_section = QFrame()
-        api_section.setFrameStyle(QFrame.StyledPanel)
-        api_layout = QVBoxLayout(api_section)
+        self.settings_btn = QPushButton("⚙️ Settings")
+        self.settings_btn.clicked.connect(self.show_preferences)
+        self.settings_btn.setStyleSheet("QPushButton { padding: 6px 12px; }")
+        header_layout.addWidget(self.settings_btn)
         
-        api_label = QLabel("Gemini API Configuration")
-        api_label.setStyleSheet("font-weight: bold; font-size: 14px;")
-        api_layout.addWidget(api_label)
-        
-        api_input_layout = QHBoxLayout()
-        api_input_layout.addWidget(QLabel("API Key:"))
-        self.api_key_input = QLineEdit()
-        self.api_key_input.setPlaceholderText("Enter your Gemini API key...")
-        # Remove password mode so we can see if API key persists
-        # self.api_key_input.setEchoMode(QLineEdit.Password)
-        api_input_layout.addWidget(self.api_key_input)
-        
-        self.save_api_btn = QPushButton("Save")
-        self.save_api_btn.clicked.connect(self.save_api_key)
-        api_input_layout.addWidget(self.save_api_btn)
-        
-        self.change_api_btn = QPushButton("Change")
-        self.change_api_btn.clicked.connect(self.change_api_key)
-        self.change_api_btn.setVisible(False)  # Hidden initially
-        api_input_layout.addWidget(self.change_api_btn)
-        api_layout.addLayout(api_input_layout)
-        
-        # Translation language selection
-        lang_layout = QHBoxLayout()
-        lang_layout.addWidget(QLabel("Translation Language:"))
-        self.language_combo = QComboBox()
-        self.language_combo.addItems(["English", "Spanish", "Hindi", "French"])
-        lang_layout.addWidget(self.language_combo)
-        lang_layout.addStretch()
-        api_layout.addLayout(lang_layout)
-        
-        layout.addWidget(api_section)
+        layout.addLayout(header_layout)
         layout.addSpacing(10)
         
         # Deck selection section
@@ -345,53 +317,22 @@ class AddCardsScreen(QWidget):
         
         # Connect signals
         self.words_input.textChanged.connect(self.update_ui_state)
-        self.api_key_input.textChanged.connect(self.update_ui_state)
+        self.deck_combo.currentTextChanged.connect(self.update_ui_state)
         
     def load_saved_settings(self):
         """Load saved settings from config."""
-        # Load API key - show actual key for debugging persistence
-        saved_api_key = config.get_api_key()
-        if saved_api_key:
-            self.api_key_input.setText(saved_api_key)  # Show actual key
-            self.api_key_input.setPlaceholderText("API key loaded from config")
-            # Keep it editable for now
-            self.save_api_btn.setVisible(True)
-            self.change_api_btn.setVisible(False)
-        else:
-            self.save_api_btn.setVisible(True)
-            self.change_api_btn.setVisible(False)
-            
-        # Load translation language
-        saved_language = config.get_translation_language()
-        self.language_combo.setCurrentText(saved_language)
-        
+        # Settings are now managed in preferences dialog
         self.update_ui_state()
     
-    def save_api_key(self):
-        """Save the API key persistently."""
-        key = self.api_key_input.text().strip()
-        
-        if not key:
-            QMessageBox.warning(self, "Invalid API Key", "Please enter a valid Gemini API key.")
-            return
-            
-        # Save to persistent config
-        config.set_api_key(key)
-        
-        # Update placeholder to show it's saved
-        self.api_key_input.setPlaceholderText("API key saved to config")
-        
-        QMessageBox.information(self, "API Key Saved", "Gemini API key saved successfully!")
-        self.update_ui_state()
-        
-    def change_api_key(self):
-        """Allow changing the saved API key."""
-        self.api_key_input.clear()
-        self.api_key_input.setPlaceholderText("Enter your Gemini API key...")
-        self.api_key_input.setReadOnly(False)
-        self.api_key_input.setFocus()
-        self.save_api_btn.setVisible(True)
-        self.change_api_btn.setVisible(False)
+    def show_preferences(self):
+        """Show preferences dialog."""
+        dialog = PreferencesDialog(self)
+        dialog.preferences_saved.connect(self.on_preferences_saved)
+        dialog.exec()
+    
+    def on_preferences_saved(self):
+        """Handle preferences being saved."""
+        # Refresh UI state after preferences change
         self.update_ui_state()
         
     def refresh_decks(self):
@@ -409,6 +350,16 @@ class AddCardsScreen(QWidget):
             # Add option to create new deck
             self.deck_combo.addItem("[Create New Deck]", None)
             
+            # If we have decks, select the first one by default
+            if decks:
+                self.deck_combo.setCurrentIndex(0)
+            else:
+                # If no decks exist, select the "Create New Deck" option
+                self.deck_combo.setCurrentIndex(0)
+            
+            # Update UI state after deck selection
+            self.update_ui_state()
+            
         except Exception as e:
             QMessageBox.warning(self, "Database Error", f"Failed to load decks: {str(e)}")
             
@@ -421,14 +372,21 @@ class AddCardsScreen(QWidget):
     def update_ui_state(self):
         """Update UI element states based on input."""
         has_words = bool(self.words_input.toPlainText().strip())
-        # Check if we have a saved API key or current input
-        has_api_key = bool(config.get_api_key() or 
-                          (self.api_key_input.text().strip() and 
-                           self.api_key_input.text().strip() != "••••••••"))
+        has_api_key = bool(config.get_api_key())
         has_deck = self.deck_combo.currentText() != ""
         
         self.process_btn.setEnabled(has_words and has_api_key and has_deck)
         self.clear_btn.setEnabled(has_words or bool(self.output_log.toPlainText()))
+        
+        # Show helpful message based on what's missing
+        if has_words and has_deck and not has_api_key:
+            self.process_btn.setToolTip("Click Settings to configure your Gemini API key")
+        elif has_api_key and has_deck and not has_words:
+            self.process_btn.setToolTip("Enter some German words to process")
+        elif has_words and has_api_key and not has_deck:
+            self.process_btn.setToolTip("Select a deck or create a new one")
+        else:
+            self.process_btn.setToolTip("")
         
     def process_words(self):
         """Process words using Gemini API."""
@@ -436,6 +394,8 @@ class AddCardsScreen(QWidget):
             self.gemini_worker.stop()
             self.gemini_worker.wait()
             self.process_btn.setText("Process Words with AI")
+            self.gemini_worker = None
+            self.update_ui_state()  # Re-enable UI after stopping
             return
             
         # Get inputs
@@ -473,11 +433,8 @@ class AddCardsScreen(QWidget):
         self.output_log.append(f"Processing {len(words)} words...")
         
         # Start processing
-        api_key = config.get_api_key() or self.api_key_input.text().strip()
-        translation_lang = self.language_combo.currentText()
-        
-        # Save translation language preference
-        config.set_translation_language(translation_lang)
+        api_key = config.get_api_key()
+        translation_lang = config.get_translation_language()
         
         self.gemini_worker = GeminiWorker(words, api_key, translation_lang)
         self.gemini_worker.progress_updated.connect(self.progress_bar.setValue)
@@ -539,6 +496,9 @@ class AddCardsScreen(QWidget):
             
         # Clean up
         self.gemini_worker = None
+        
+        # Re-enable UI - this is critical for allowing subsequent processing
+        self.update_ui_state()
         
     def set_database(self, database):
         """Set the database connection."""

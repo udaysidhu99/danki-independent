@@ -11,7 +11,7 @@ class HomeScreen(QWidget):
     """Main home screen with add cards and start review functionality."""
     
     # Signals
-    start_review_requested = Signal()
+    start_review_requested = Signal(str)  # deck_id - now passes selected deck ID
     show_stats_requested = Signal()
     deck_created = Signal(str)  # deck_name
     
@@ -168,24 +168,68 @@ class HomeScreen(QWidget):
                 # Calculate overall stats for all decks
                 total_stats = {"new": 0, "learning": 0, "review": 0}
                 
+                from ...utils.study_time import study_time
+                study_date = study_time.get_study_date(now_ts)
+                
                 for deck in decks:
-                    # Get stats for each deck
-                    stats = self.database.get_stats_today([deck['id']], now_ts)
+                    deck_id = deck['id']
+                    
+                    # Get deck preferences and daily stats
+                    prefs = self.database.get_deck_preferences(deck_id)
+                    daily_stats = self.database.get_daily_stats(deck_id, study_date)
+                    
+                    # Get available cards (due now)
+                    stats = self.database.get_stats_today([deck_id], now_ts)
+                    
+                    # Calculate remaining daily allowance
+                    new_per_day = prefs.get('new_per_day', 10)
+                    rev_per_day = prefs.get('rev_per_day', 100)
+                    
+                    new_studied = daily_stats['new_studied']
+                    rev_studied = daily_stats['rev_studied']
+                    
+                    new_remaining = max(0, new_per_day - new_studied)
+                    rev_remaining = max(0, rev_per_day - rev_studied)
+                    
+                    # Limit available cards by daily remaining
+                    available_new = min(stats.get('new', 0), new_remaining)
+                    available_rev = min(stats.get('review', 0), rev_remaining)
+                    available_learning = stats.get('learning', 0)  # Learning cards always available
+                    
+                    total_available = available_new + available_learning + available_rev
                     
                     # Add to total stats
-                    total_stats["new"] += stats.get("new", 0)
-                    total_stats["learning"] += stats.get("learning", 0) 
-                    total_stats["review"] += stats.get("review", 0)
+                    total_stats["new"] += available_new
+                    total_stats["learning"] += available_learning
+                    total_stats["review"] += available_rev
                     
-                    # Create list item
+                    # Create list item with daily progress
                     item_text = f"📚 {deck['name']}"
-                    if stats['total'] > 0:
-                        item_text += f" ({stats['new']} new, {stats['learning']} learning, {stats['review']} review)"
+                    
+                    if total_available > 0:
+                        # Show available cards
+                        parts = []
+                        if available_new > 0:
+                            parts.append(f"{available_new} new")
+                        if available_learning > 0:
+                            parts.append(f"{available_learning} learning")
+                        if available_rev > 0:
+                            parts.append(f"{available_rev} review")
+                        item_text += f" ({', '.join(parts)})"
+                    elif new_studied > 0 or rev_studied > 0:
+                        # Show finished for today
+                        item_text += f" ✅ Done today ({new_studied}/{new_per_day} new, {rev_studied}/{rev_per_day} review)"
                     else:
-                        item_text += " (empty)"
+                        # No cards available and none studied
+                        item_text += " (no cards due)"
                     
                     item = QListWidgetItem(item_text)
-                    item.setData(Qt.UserRole, deck['id'])  # Store deck ID
+                    item.setData(Qt.UserRole, deck_id)  # Store deck ID
+                    
+                    # Disable if finished for the day
+                    if total_available == 0 and (new_studied > 0 or rev_studied > 0):
+                        item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
+                    
                     self.deck_list.addItem(item)
                 
                 # Update the overall stats display
@@ -200,16 +244,20 @@ class HomeScreen(QWidget):
     def on_deck_selected(self, item):
         """Handle deck selection (double-click)."""
         deck_id = item.data(Qt.UserRole)
-        # Extract deck name more safely
+        
+        # Check if deck is available for review (not disabled)
+        if not (item.flags() & Qt.ItemIsEnabled):
+            return  # Don't start review for finished decks
+            
+        # Extract deck name for logging
         full_text = item.text()
         if '📚 ' in full_text:
             deck_name = full_text.split('📚 ')[1].split(' (')[0]
         else:
             deck_name = full_text.split(' (')[0]
         
-        # TODO: Start review for this specific deck
-        print(f"Selected deck: {deck_name} (ID: {deck_id})")
-        self.start_review_requested.emit()
+        print(f"Starting review for deck: {deck_name} (ID: {deck_id})")
+        self.start_review_requested.emit(deck_id)  # Pass deck_id to signal
         
     def show_deck_context_menu(self, position):
         """Show context menu for deck list."""

@@ -6,6 +6,9 @@ from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QKeySequence, QShortcut
 import time
 
+# Import TTS
+from ...utils.tts import german_tts
+
 
 class ReviewScreen(QWidget):
     """Review screen with card display and rating buttons."""
@@ -35,6 +38,15 @@ class ReviewScreen(QWidget):
         header_layout.addWidget(self.back_button)
         
         header_layout.addStretch()
+        
+        # Audio toggle button
+        self.audio_toggle_btn = QPushButton("🔊")  # Speaker icon
+        self.audio_toggle_btn.clicked.connect(self.toggle_audio)
+        self.audio_toggle_btn.setFixedSize(40, 30)
+        self.audio_toggle_btn.setToolTip("Toggle audio on/off")
+        header_layout.addWidget(self.audio_toggle_btn)
+        
+        header_layout.addSpacing(10)
         
         self.progress_label = QLabel("Card 1 of 10")
         header_layout.addWidget(self.progress_label)
@@ -184,19 +196,32 @@ class ReviewScreen(QWidget):
         
         # Show the show answer button
         self.show_answer_button.show()
+        
+        # Auto-play German audio when German is shown
+        self._play_german_audio_if_needed(card, front_text)
 
     def _format_front_text(self, card):
-        """Format the front text with proper German styling."""
-        front = card['front']
+        """Format the front text based on card template direction."""
+        template = card.get('template', 'front->back')
         meta = card.get('meta', {})
         
-        if meta and meta.get('word_type') == 'noun':
-            # Show noun with article if available
-            article = meta.get('artikel_d', '')
-            if article:
-                return f"{article} {front}"
+        # Determine what to show based on template
+        if template == 'back->front':
+            # Show English -> German direction
+            display_text = card['back']  # Show English (back) as question
+        else:
+            # Show German -> English direction (default)
+            display_text = card['front']  # Show German (front) as question
+            
+            # For German front, add article if it's a noun and not already present
+            if meta and meta.get('word_type') == 'noun':
+                article = meta.get('artikel_d', '')
+                if article and template == 'front->back':
+                    # Check if article is already present to avoid duplication
+                    if not display_text.startswith(f"{article} "):
+                        return f"{article} {display_text}"
         
-        return front
+        return display_text
         
     def show_answer(self):
         """Show the answer and rating buttons."""
@@ -215,16 +240,36 @@ class ReviewScreen(QWidget):
         self.got_it_button.show()
 
     def _show_back_content(self, card):
-        """Display formatted back content with translation and metadata."""
-        # Show translation
-        self.translation_label.setText(card['back'])
+        """Display formatted back content based on card template direction."""
+        template = card.get('template', 'front->back')
+        meta = card.get('meta', {})
         
-        # Format metadata
+        # Determine what to show as answer based on template
+        if template == 'back->front':
+            # English -> German: Show German (front) as answer
+            answer_text = card['front']
+            
+            # Add article for German nouns when showing as answer (avoid duplication)
+            if meta and meta.get('word_type') == 'noun':
+                article = meta.get('artikel_d', '')
+                if article and not answer_text.startswith(f"{article} "):
+                    answer_text = f"{article} {answer_text}"
+        else:
+            # German -> English: Show English (back) as answer  
+            answer_text = card['back']
+        
+        self.translation_label.setText(answer_text)
+        
+        # Format metadata (same regardless of direction)
         metadata_text = self._format_metadata(card)
         self.metadata_label.setText(metadata_text)
         
         # Show the back widget
         self.back_widget.show()
+        
+        # Auto-play German audio when German answer is revealed (back->front cards)
+        if template == 'back->front':
+            self._play_german_audio_if_needed(card, answer_text)
 
     def _format_metadata(self, card):
         """Format metadata for German language cards."""
@@ -326,9 +371,76 @@ class ReviewScreen(QWidget):
             
     def show_completion(self):
         """Show review completion screen."""
-        self.front_label.setText("🎉 Review Complete!")
-        self.back_label.hide()
+        # Hide all review elements
+        self.back_widget.hide()
         self.missed_button.hide()
-        self.almost_button.hide()
+        self.almost_button.hide() 
         self.got_it_button.hide()
         self.show_answer_button.hide()
+        
+        # Show completion message
+        self.front_label.setText("🎉 All Reviews Complete!\n\nGreat job! Come back tomorrow for more cards.")
+        self.front_label.setStyleSheet("QLabel { color: #27ae60; padding: 40px; text-align: center; }")
+        
+        # Update progress to show completion
+        if hasattr(self, 'cards') and self.cards:
+            total = len(self.cards)
+            self.progress_label.setText(f"Completed {total} cards")
+            self.progress_bar.setValue(total)
+        else:
+            self.progress_label.setText("Session complete")
+            
+        # User can manually click back button to return home
+    
+    def toggle_audio(self):
+        """Toggle TTS audio on/off and update button appearance."""
+        new_state = german_tts.toggle_enabled()
+        
+        # Update button icon based on state
+        if new_state:
+            self.audio_toggle_btn.setText("🔊")  # Speaker on
+            self.audio_toggle_btn.setToolTip("Audio on - Click to turn off")
+        else:
+            self.audio_toggle_btn.setText("🔇")  # Speaker off
+            self.audio_toggle_btn.setToolTip("Audio off - Click to turn on")
+    
+    def _play_german_audio_if_needed(self, card, text):
+        """Play German TTS audio if conditions are met."""
+        if not german_tts.is_enabled():
+            return
+            
+        template = card.get('template', 'front->back')
+        meta = card.get('meta', {})
+        
+        # Determine if we should play German audio
+        should_play_german = False
+        german_text = ""
+        
+        if template == 'front->back':
+            # German -> English direction: always play German (front text)
+            should_play_german = True
+            german_text = card['front']
+            
+            # Add article for nouns (avoid duplication)
+            if meta and meta.get('word_type') == 'noun':
+                article = meta.get('artikel_d', '')
+                if article and not german_text.startswith(f"{article} "):
+                    german_text = f"{article} {german_text}"
+                    
+        elif template == 'back->front':
+            # English -> German direction: only play when showing German answer
+            if text == card['front'] or (meta and meta.get('word_type') == 'noun' and 
+                                        meta.get('artikel_d') and 
+                                        text.startswith(meta.get('artikel_d', ''))):
+                should_play_german = True
+                german_text = card['front']
+                
+                # Add article for nouns if not already included
+                if meta and meta.get('word_type') == 'noun':
+                    article = meta.get('artikel_d', '')
+                    if article and not german_text.startswith(article):
+                        german_text = f"{article} {german_text}"
+        
+        # Play German audio if conditions are met
+        if should_play_german and german_text:
+            german_tts.speak(german_text)

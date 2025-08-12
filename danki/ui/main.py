@@ -1,7 +1,7 @@
 """Main UI application for Danki flashcard app."""
 
 import sys
-from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget
+from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QMessageBox
 from PySide6.QtCore import Qt
 
 from .screens.home import HomeScreen
@@ -30,12 +30,11 @@ class MainWindow(QMainWindow):
         # Create screens
         self.home_screen = HomeScreen(self.database)
         self.add_cards_screen = AddCardsScreen(self.database)
-        self.review_screen = ReviewScreen()
+        self.review_screen = ReviewScreen()  # Keep for review sessions, but not as tab
         
-        # Add screens as tabs
+        # Add screens as tabs (no Review tab)
         self.tab_widget.addTab(self.home_screen, "🏠 Home")
         self.tab_widget.addTab(self.add_cards_screen, "➕ Add Cards")
-        self.tab_widget.addTab(self.review_screen, "📚 Review")
         
         # Connect signals
         self.home_screen.start_review_requested.connect(self.start_review)
@@ -49,34 +48,107 @@ class MainWindow(QMainWindow):
         self.tab_widget.setCurrentIndex(0)
         
     def show_home(self):
-        """Show the home tab."""
-        self.tab_widget.setCurrentIndex(0)
-        self.home_screen.refresh_deck_list()
-        # TODO: Update stats
+        """Show the home tab and restore main navigation."""
+        try:
+            # Restore the tab widget as central widget if it's not already
+            if self.centralWidget() != self.tab_widget:
+                self.setCentralWidget(self.tab_widget)
+            
+            # Switch to home tab and refresh
+            self.tab_widget.setCurrentIndex(0)
+            self.home_screen.refresh_deck_list()
+        except RuntimeError:
+            # Widgets were deleted, recreate everything
+            self.recreate_ui()
+            
+    def recreate_ui(self):
+        """Recreate the main UI if widgets were deleted."""
+        try:
+            # Recreate all components
+            from .screens.home import HomeScreen
+            from .screens.add_cards import AddCardsScreen
+            
+            # Create new screens
+            self.home_screen = HomeScreen(self.database)
+            self.add_cards_screen = AddCardsScreen(self.database)
+            
+            # Create new tab widget
+            self.tab_widget = QTabWidget()
+            self.setCentralWidget(self.tab_widget)
+            
+            # Add tabs
+            self.tab_widget.addTab(self.home_screen, "🏠 Home")
+            self.tab_widget.addTab(self.add_cards_screen, "➕ Add Cards")
+            
+            # Reconnect signals
+            self.home_screen.start_review_requested.connect(self.start_review)
+            self.home_screen.deck_created.connect(self.on_deck_created)
+            self.add_cards_screen.cards_added.connect(self.on_cards_added)
+            
+            # Set to home tab and refresh
+            self.tab_widget.setCurrentIndex(0)
+            self.home_screen.refresh_deck_list()
+        except Exception as e:
+            print(f"Error recreating UI: {e}")
+            # Force close if we can't recover
+            self.close()
         
-    def start_review(self):
-        """Start a review session."""
-        self.tab_widget.setCurrentIndex(2)  # Switch to Review tab
-        
-        # Get all deck IDs
-        decks = self.database.list_decks()
-        if not decks:
-            self.review_screen.start_review_session([])
+    def start_review(self, deck_id):
+        """Start a review session for a specific deck."""
+        if not deck_id:
+            QMessageBox.warning(self, "No Deck Selected", "Please select a deck to review.")
             return
             
-        deck_ids = [deck['id'] for deck in decks]
+        # Use only the selected deck
+        deck_ids = [deck_id]
         
         # Build review session with scheduler
         try:
             cards = self.scheduler.build_session(deck_ids, max_new=10, max_rev=50)
+            if not cards:
+                # Get deck name for better error message
+                deck_name = "Selected deck"
+                try:
+                    deck_info = self.database.get_deck(deck_id)
+                    if deck_info:
+                        deck_name = deck_info['name']
+                except:
+                    pass
+                    
+                QMessageBox.information(self, "No Cards Due", f"No cards are due for review in '{deck_name}' right now!")
+                return
+                
+            # Ensure review screen exists and is connected
+            self.ensure_review_screen()
+                
+            # Replace main content with review screen
+            self.setCentralWidget(self.review_screen)
             self.review_screen.start_review_session(cards)
+            
         except Exception as e:
             print(f"Error building review session: {e}")
-            self.review_screen.start_review_session([])
+            QMessageBox.critical(self, "Error", f"Failed to start review session: {str(e)}")
+            
+    def ensure_review_screen(self):
+        """Ensure review screen exists and is properly connected."""
+        try:
+            # Test if review screen is still valid by accessing a property
+            _ = self.review_screen.isVisible()
+        except (RuntimeError, AttributeError):
+            # Review screen was deleted, recreate it
+            from .screens.review import ReviewScreen
+            self.review_screen = ReviewScreen()
+            self.review_screen.back_to_home.connect(self.show_home)
+            self.review_screen.review_finished.connect(self.review_complete)
+            self.review_screen.card_rated.connect(self.on_card_rated)
         
     def review_complete(self):
         """Handle review session completion."""
-        self.review_screen.show_completion()
+        try:
+            self.review_screen.show_completion()
+        except (RuntimeError, AttributeError):
+            # Review screen was deleted, just return to home
+            self.show_home()
         # TODO: Update stats
         
     def on_cards_added(self, count):

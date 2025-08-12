@@ -80,7 +80,19 @@ class Database:
             FOREIGN KEY(card_id) REFERENCES cards(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS daily_stats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            deck_id TEXT NOT NULL,
+            study_date TEXT NOT NULL,  -- YYYY-MM-DD format
+            new_studied INTEGER NOT NULL DEFAULT 0,
+            rev_studied INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            UNIQUE(deck_id, study_date),
+            FOREIGN KEY(deck_id) REFERENCES decks(id) ON DELETE CASCADE
+        );
+
         CREATE INDEX IF NOT EXISTS idx_cards_due ON cards(state, due_ts);
+        CREATE INDEX IF NOT EXISTS idx_daily_stats ON daily_stats(deck_id, study_date);
         """
         
         self.conn.executescript(schema)
@@ -107,7 +119,8 @@ class Database:
             prefs = {
                 "new_per_day": 10,
                 "rev_per_day": 100,
-                "steps_min": [10, 1440]  # 10 min, 1 day
+                "steps_min": [1, 10],  # 1 min, 10 min - Anki default for immediate re-learning
+                "bidirectional_cards": True  # Enable bidirectional cards by default
             }
         
         deck_id = str(uuid.uuid4())
@@ -169,12 +182,25 @@ class Database:
             (note_id, deck_id, front, back, json.dumps(meta) if meta else None, now_ts)
         )
         
-        # Create card for the note
-        card_id = str(uuid.uuid4())
+        # Get deck preferences to check if bidirectional cards are enabled
+        prefs = self.get_deck_preferences(deck_id)
+        bidirectional = prefs.get('bidirectional_cards', True)  # Default to True
+        
+        # Create card(s) for the note
+        # Always create front->back card
+        card_id_1 = str(uuid.uuid4())
         self.conn.execute(
             "INSERT INTO cards (id, note_id, template, state, due_ts) VALUES (?, ?, ?, ?, ?)",
-            (card_id, note_id, "front->back", "new", now_ts)
+            (card_id_1, note_id, "front->back", "new", now_ts)
         )
+        
+        # Create back->front card if bidirectional is enabled
+        if bidirectional:
+            card_id_2 = str(uuid.uuid4())
+            self.conn.execute(
+                "INSERT INTO cards (id, note_id, template, state, due_ts) VALUES (?, ?, ?, ?, ?)",
+                (card_id_2, note_id, "back->front", "new", now_ts)
+            )
         
         self.conn.commit()
         return note_id
@@ -204,6 +230,7 @@ class Database:
         return [{
             "card_id": row["id"],
             "note_id": row["note_id"],
+            "template": row["template"],  # Add missing template field!
             "front": row["front"],
             "back": row["back"],
             "meta": json.loads(row["meta"]) if row["meta"] else None,
@@ -309,3 +336,41 @@ class Database:
                 except json.JSONDecodeError as e:
                     print(f"[deck] skipping invalid JSON line: {e}: {raw[:80]}")
         return cards
+
+    def get_daily_stats(self, deck_id: str, study_date: str) -> Dict:
+        """Get daily stats for a deck on a specific study date."""
+        row = self.conn.execute(
+            "SELECT new_studied, rev_studied FROM daily_stats WHERE deck_id = ? AND study_date = ?",
+            (deck_id, study_date)
+        ).fetchone()
+        
+        if row:
+            return {"new_studied": row["new_studied"], "rev_studied": row["rev_studied"]}
+        else:
+            return {"new_studied": 0, "rev_studied": 0}
+
+    def increment_daily_stats(self, deck_id: str, study_date: str, new_count: int = 0, rev_count: int = 0) -> None:
+        """Increment daily stats for a deck. Creates entry if it doesn't exist."""
+        self.conn.execute(
+            """INSERT OR REPLACE INTO daily_stats (deck_id, study_date, new_studied, rev_studied, created_at)
+               VALUES (?, ?, 
+                       COALESCE((SELECT new_studied FROM daily_stats WHERE deck_id = ? AND study_date = ?), 0) + ?,
+                       COALESCE((SELECT rev_studied FROM daily_stats WHERE deck_id = ? AND study_date = ?), 0) + ?,
+                       ?)""",
+            (deck_id, study_date, deck_id, study_date, new_count, deck_id, study_date, rev_count, int(time.time()))
+        )
+        self.conn.commit()
+
+    def get_deck_preferences(self, deck_id: str) -> Dict:
+        """Get deck preferences."""
+        row = self.conn.execute("SELECT prefs FROM decks WHERE id = ?", (deck_id,)).fetchone()
+        if row:
+            return json.loads(row["prefs"])
+        else:
+            # Return default preferences
+            return {
+                "new_per_day": 10,
+                "rev_per_day": 100,
+                "steps_min": [1, 10],
+                "bidirectional_cards": True
+            }

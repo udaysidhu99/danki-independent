@@ -57,20 +57,40 @@ class ReviewScreen(QWidget):
         self.front_label = QLabel("Click 'Show Answer' to begin")
         self.front_label.setAlignment(Qt.AlignCenter)
         front_font = QFont()
-        front_font.setPointSize(18)
+        front_font.setPointSize(24)
+        front_font.setBold(True)
         self.front_label.setFont(front_font)
         self.front_label.setWordWrap(True)
+        self.front_label.setStyleSheet("QLabel { color: #1a252f; padding: 20px; }")
         card_layout.addWidget(self.front_label)
         
-        # Back text (hidden initially)
-        self.back_label = QLabel()
-        self.back_label.setAlignment(Qt.AlignCenter)
-        back_font = QFont()
-        back_font.setPointSize(16)
-        self.back_label.setFont(back_font)
-        self.back_label.setWordWrap(True)
-        self.back_label.hide()
-        card_layout.addWidget(self.back_label)
+        # Back content (hidden initially) - will contain translation and metadata
+        self.back_widget = QWidget()
+        back_layout = QVBoxLayout(self.back_widget)
+        back_layout.setSpacing(15)
+        
+        # Translation
+        self.translation_label = QLabel()
+        self.translation_label.setAlignment(Qt.AlignCenter)
+        translation_font = QFont()
+        translation_font.setPointSize(18)
+        self.translation_label.setFont(translation_font)
+        self.translation_label.setWordWrap(True)
+        self.translation_label.setStyleSheet("QLabel { color: #27ae60; font-weight: bold; }")
+        back_layout.addWidget(self.translation_label)
+        
+        # Metadata display (article, conjugations, examples)
+        self.metadata_label = QLabel()
+        self.metadata_label.setAlignment(Qt.AlignCenter)
+        metadata_font = QFont()
+        metadata_font.setPointSize(12)
+        self.metadata_label.setFont(metadata_font)
+        self.metadata_label.setWordWrap(True)
+        self.metadata_label.setStyleSheet("QLabel { color: #7f8c8d; }")
+        back_layout.addWidget(self.metadata_label)
+        
+        self.back_widget.hide()
+        card_layout.addWidget(self.back_widget)
         
         layout.addWidget(self.card_frame)
         
@@ -152,17 +172,31 @@ class ReviewScreen(QWidget):
         self.card_shown_at = time.time()
         self.is_answer_shown = False
         
-        # Show front
-        self.front_label.setText(card['front'])
+        # Format front text for German cards
+        front_text = self._format_front_text(card)
+        self.front_label.setText(front_text)
         
         # Hide back and rating buttons
-        self.back_label.hide()
+        self.back_widget.hide()
         self.missed_button.hide()
         self.almost_button.hide()
         self.got_it_button.hide()
         
         # Show the show answer button
         self.show_answer_button.show()
+
+    def _format_front_text(self, card):
+        """Format the front text with proper German styling."""
+        front = card['front']
+        meta = card.get('meta', {})
+        
+        if meta and meta.get('word_type') == 'noun':
+            # Show noun with article if available
+            article = meta.get('artikel_d', '')
+            if article:
+                return f"{article} {front}"
+        
+        return front
         
     def show_answer(self):
         """Show the answer and rating buttons."""
@@ -171,17 +205,92 @@ class ReviewScreen(QWidget):
             
         self.is_answer_shown = True
         
-        # Show back text
-        self.back_label.setText(self.current_card['back'])
-        self.back_label.show()
+        # Format and show back content
+        self._show_back_content(self.current_card)
         
         # Hide show answer button, show rating buttons
         self.show_answer_button.hide()
         self.missed_button.show()
         self.almost_button.show()
         self.got_it_button.show()
+
+    def _show_back_content(self, card):
+        """Display formatted back content with translation and metadata."""
+        # Show translation
+        self.translation_label.setText(card['back'])
         
-        # TODO: Play TTS
+        # Format metadata
+        metadata_text = self._format_metadata(card)
+        self.metadata_label.setText(metadata_text)
+        
+        # Show the back widget
+        self.back_widget.show()
+
+    def _format_metadata(self, card):
+        """Format metadata for German language cards."""
+        meta = card.get('meta', {})
+        if not meta:
+            return ""
+        
+        lines = []
+        word_type = meta.get('word_type', '')
+        
+        if word_type == 'noun':
+            # Show article and plural
+            artikel = meta.get('artikel_d', '')
+            plural = meta.get('plural_d', '')
+            if artikel or plural:
+                info = []
+                if artikel:
+                    # Color-code articles
+                    color = {"der": "#3498db", "die": "#e74c3c", "das": "#f39c12"}.get(artikel, "#7f8c8d")
+                    info.append(f'<span style="color: {color}; font-weight: bold;">{artikel}</span>')
+                if plural:
+                    info.append(f"plural: {plural}")
+                lines.append(" • ".join(info))
+                
+        elif word_type == 'verb':
+            # Show conjugations
+            conjugation = meta.get('conjugation', {})
+            if conjugation:
+                lines.append("<b>Conjugation:</b>")
+                conj_parts = []
+                for person, form in conjugation.items():
+                    if form:
+                        conj_parts.append(f"{person}: {form}")
+                if conj_parts:
+                    lines.append(" • ".join(conj_parts[:3]))  # Show first 3
+                    if len(conj_parts) > 3:
+                        lines.append(" • ".join(conj_parts[3:]))  # Show rest
+            
+            # Show key tenses
+            praeteritum = meta.get('praeteritum', '')
+            perfekt = meta.get('perfekt', '')
+            if praeteritum or perfekt:
+                tenses = []
+                if praeteritum:
+                    tenses.append(f"Past: {praeteritum}")
+                if perfekt:
+                    tenses.append(f"Perfect: {perfekt}")
+                lines.append(" • ".join(tenses))
+        
+        # Show example sentences
+        examples = []
+        for i in range(1, 4):  # s1, s2, s3
+            example = meta.get(f's{i}', '')
+            example_en = meta.get(f's{i}e', '')
+            if example:
+                if example_en:
+                    examples.append(f"<i>{example}</i><br>&nbsp;&nbsp;→ {example_en}")
+                else:
+                    examples.append(f"<i>{example}</i>")
+        
+        if examples:
+            lines.append("")  # Add spacing
+            lines.append("<b>Examples:</b>")
+            lines.extend(examples[:2])  # Show max 2 examples
+        
+        return "<br>".join(lines)
         
     def rate_card(self, rating):
         """Rate the current card and move to next."""

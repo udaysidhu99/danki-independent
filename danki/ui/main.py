@@ -8,6 +8,7 @@ from .screens.home import HomeScreen
 from .screens.review import ReviewScreen
 from .screens.add_cards import AddCardsScreen
 from ..engine.db import Database
+from ..engine.scheduler import Scheduler, Rating
 
 
 class MainWindow(QMainWindow):
@@ -18,8 +19,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Danki Independent")
         self.resize(700, 500)
         
-        # Initialize database
+        # Initialize database and scheduler
         self.database = Database("danki_data.sqlite")
+        self.scheduler = Scheduler("danki_data.sqlite")
         
         # Create tab widget for main navigation
         self.tab_widget = QTabWidget()
@@ -41,6 +43,7 @@ class MainWindow(QMainWindow):
         self.add_cards_screen.cards_added.connect(self.on_cards_added)
         self.review_screen.back_to_home.connect(self.show_home)
         self.review_screen.review_finished.connect(self.review_complete)
+        self.review_screen.card_rated.connect(self.on_card_rated)
         
         # Start on home tab
         self.tab_widget.setCurrentIndex(0)
@@ -54,9 +57,22 @@ class MainWindow(QMainWindow):
     def start_review(self):
         """Start a review session."""
         self.tab_widget.setCurrentIndex(2)  # Switch to Review tab
-        # TODO: Load cards for review and start session
-        # For now, show empty state
-        self.review_screen.start_review_session([])
+        
+        # Get all deck IDs
+        decks = self.database.list_decks()
+        if not decks:
+            self.review_screen.start_review_session([])
+            return
+            
+        deck_ids = [deck['id'] for deck in decks]
+        
+        # Build review session with scheduler
+        try:
+            cards = self.scheduler.build_session(deck_ids, max_new=10, max_rev=50)
+            self.review_screen.start_review_session(cards)
+        except Exception as e:
+            print(f"Error building review session: {e}")
+            self.review_screen.start_review_session([])
         
     def review_complete(self):
         """Handle review session completion."""
@@ -76,6 +92,16 @@ class MainWindow(QMainWindow):
         print(f"Created deck: {deck_name}")
         # Refresh add cards screen deck list
         self.add_cards_screen.refresh_decks()
+        
+    def on_card_rated(self, card_id, rating, answer_ms):
+        """Handle card rating during review."""
+        try:
+            # Convert rating to scheduler Rating enum
+            scheduler_rating = Rating(rating)
+            self.scheduler.review(card_id, scheduler_rating, answer_ms)
+            print(f"Card {card_id} rated {rating} in {answer_ms}ms")
+        except Exception as e:
+            print(f"Error processing card rating: {e}")
         
 
 def main():

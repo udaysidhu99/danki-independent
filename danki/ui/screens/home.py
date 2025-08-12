@@ -161,13 +161,21 @@ class HomeScreen(QWidget):
                 self.no_decks_label.setVisible(False)
                 self.deck_list.setVisible(True)
                 
-                # Add decks to list
+                # Add decks to list and calculate overall stats
                 import time
                 now_ts = int(time.time())
+                
+                # Calculate overall stats for all decks
+                total_stats = {"new": 0, "learning": 0, "review": 0}
                 
                 for deck in decks:
                     # Get stats for each deck
                     stats = self.database.get_stats_today([deck['id']], now_ts)
+                    
+                    # Add to total stats
+                    total_stats["new"] += stats.get("new", 0)
+                    total_stats["learning"] += stats.get("learning", 0) 
+                    total_stats["review"] += stats.get("review", 0)
                     
                     # Create list item
                     item_text = f"📚 {deck['name']}"
@@ -179,6 +187,9 @@ class HomeScreen(QWidget):
                     item = QListWidgetItem(item_text)
                     item.setData(Qt.UserRole, deck['id'])  # Store deck ID
                     self.deck_list.addItem(item)
+                
+                # Update the overall stats display
+                self.update_stats(total_stats)
                     
         except Exception as e:
             print(f"Error refreshing deck list: {e}")

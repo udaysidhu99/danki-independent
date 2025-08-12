@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Danki Independent is a spaced repetition flashcard application for language learners that delivers Anki-style spaced repetition without the setup burden. Built with Python and PySide6, it focuses on clean three-button reviews, built-in CEFR decks (A1-B2), and a minimal home → review flow.
 
-**Current Status**: Phase 1 Mac MVP in active development. M0 (foundation) ✅ complete, AI card generation ✅ complete, working on M1 (review session).
+**Current Status**: Phase 1 Mac MVP in active development. M0 (foundation) ✅ complete, AI card generation ✅ complete, M1 (core engine) ✅ complete. Working on M2 polish features.
 
 ## Development Commands
 
@@ -81,21 +81,25 @@ SQLite with WAL mode for performance and safety:
 
 ✅ **M0 Foundation**: Package structure, SQLite schema, skeleton UI  
 ✅ **AI Card Generation**: Gemini API integration, persistent config, deck management  
-🔄 **M1 Core Engine**: SM-2 scheduler, review session with 3-button interface  
-⏳ **M2 Polish**: TTS with caching, stats popover, backup/restore  
+✅ **M1 Core Engine**: SM-2 scheduler, review session with 3-button interface  
+🔄 **M2 Polish**: TTS with caching, stats dashboard, backup/restore  
 ⏳ **M3 Content**: Full CEFR decks A1-B2, leech detection, bury siblings
 
-### Recently Completed (Session 1)
+### Recently Completed (Sessions 1-2)
 - ✅ Real Gemini API integration with German language focus
 - ✅ Bulk word processing with rich metadata (conjugations, articles, examples)
 - ✅ Persistent API key storage in `~/.danki/config.json`
 - ✅ Complete deck management (create, delete, list with card counts)
 - ✅ Cross-screen synchronization between Home/Add Cards tabs
-- ✅ Context menu fixes and proper error handling
+- ✅ **Complete Review Session**: 3-button interface, German card display, keyboard shortcuts
+- ✅ **Full SM-2 Scheduling**: Card state transitions, ease adjustments, lapse handling
+- ✅ **Engine Fixes**: Home stats display, card availability, proper scheduling logic
+- ✅ **UI Polish**: API key persistence, compact layouts, better contrast
 
-### Next Priority (Session 2)
-- 🎯 **Review Session Implementation**: Load cards, display front/back, 3-button rating
-- 🎯 **Basic SM-2 Scheduling**: Card state transitions (new → learning → review)
+### Next Priority (Session 3 - M2 Polish)
+- 🎯 **TTS Audio Support**: German pronunciation with edge-tts, audio caching
+- 🎯 **Stats Dashboard**: Learning analytics, completion streaks, deck insights
+- 🎯 **Built-in CEFR Decks**: A1-B2 German vocabulary with import functionality
 
 ### Data Formats
 

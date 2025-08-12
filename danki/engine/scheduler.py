@@ -33,14 +33,11 @@ class Scheduler:
             
         # Get all due cards
         cards = self.db.get_cards_for_review(deck_ids, now_ts)
-        print(f"DEBUG: Found {len(cards)} cards due for review")
         
         # Separate by state
         new_cards = [c for c in cards if c['state'] == 'new']
         learning_cards = [c for c in cards if c['state'] == 'learning']
         review_cards = [c for c in cards if c['state'] == 'review']
-        
-        print(f"DEBUG: new={len(new_cards)}, learning={len(learning_cards)}, review={len(review_cards)}")
         
         # Apply limits
         if max_new is not None:
@@ -50,7 +47,6 @@ class Scheduler:
             
         # Order: learning first (most urgent), then new, then review
         session = learning_cards + new_cards + review_cards
-        print(f"DEBUG: Final session has {len(session)} cards")
         
         return session
 

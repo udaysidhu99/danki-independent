@@ -159,5 +159,35 @@ Keep Qt types out of engine; UI calls pure Python methods.
 Provide docstrings and small docstring examples for each method.
 Add CLI harness for headless tests: python -m danki.engine.cli demo-session.
 
-Ready for implementation.
+## 18) Implementation Status (Updated Aug 2025)
+
+### ✅ Completed Features
+- **Core Engine**: Full SM-2 scheduling algorithm with proper daily limits
+- **Database Layer**: SQLite with WAL mode, all CRUD operations, daily stats tracking
+- **Review Interface**: 3-button rating system with keyboard shortcuts (Space, 1/2/3)
+- **Deck Management**: Create, delete, list decks with card counts and progress
+- **AI Card Generation**: Gemini API integration with German word processing
+- **TTS System**: German text-to-speech with edge-tts, audio caching, speaker toggle
+- **Bidirectional Cards**: Optional front→back and back→front cards per note
+- **Daily Limits**: Per-deck new/review limits with progress tracking
+- **UI Polish**: Preferences dialog, article duplication fixes, fullscreen review mode
+
+### 🔄 In Progress
+- **GUI Redesign**: Planning modern framework migration (Electron consideration)
+- **Built-in Decks**: CEFR A1-B2 German vocabulary preparation
+
+### ⏳ Remaining (M2/M3)
+- **Stats Dashboard**: Learning analytics and completion streaks
+- **Backup/Restore**: Manual data export/import functionality
+- **Leech Detection**: Cards that require repeated relearning
+- **CEFR Content**: Complete A1-B2 German vocabulary decks
+
+### Technical Achievements
+- **Architecture**: Clean separation between engine (Python) and UI (PySide6)
+- **Testing**: Comprehensive unit tests for scheduler logic
+- **Performance**: Optimized queries with proper indexing
+- **Audio**: Real-time German pronunciation with neural voice
+- **Persistence**: Robust configuration and API key management
+
+Ready for next phase development.
 

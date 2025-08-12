@@ -160,4 +160,4 @@ Provide docstrings and small docstring examples for each method.
 Add CLI harness for headless tests: python -m danki.engine.cli demo-session.
 
 Ready for implementation.
-Next: we can add the initial file tree, requirements, and stub classes so the repository compiles and launches a blank window.
+

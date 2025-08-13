@@ -102,9 +102,10 @@ class MainWindow(QMainWindow):
         # Use only the selected deck
         deck_ids = [deck_id]
         
-        # Build review session with scheduler
+        # Build review session with Anki-style scheduler
         try:
-            cards = self.scheduler.build_session(deck_ids, max_new=10, max_rev=50)
+            print(f"\n🎯 Starting Anki-style session for deck: {deck_id}")
+            cards = self.scheduler.build_anki_session(deck_ids)
             if not cards:
                 # Get deck name for better error message
                 deck_name = "Selected deck"
@@ -190,8 +191,9 @@ class MainWindow(QMainWindow):
             if not deck_ids:
                 return
             
-            # Build new session with current limits
-            new_cards = self.scheduler.build_session(deck_ids, max_new=10, max_rev=50)
+            # Build new session with Anki-style queue management
+            print(f"\n🔄 Rebuilding Anki-style queue after card rating")
+            new_cards = self.scheduler.build_anki_session(deck_ids)
             
             if new_cards:
                 # Update the review screen with refreshed queue

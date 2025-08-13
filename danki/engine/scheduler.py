@@ -39,6 +39,59 @@ class Scheduler:
         """Add a note to a deck. Returns the new note ID."""
         return self.db.add_note(deck_id, front, back, meta)
 
+    def build_anki_session(self, deck_ids: list[str], now_ts: Optional[int] = None) -> list[dict]:
+        """Build session using Anki's hierarchical approach (Phase 1-3)."""
+        if now_ts is None:
+            now_ts = int(time.time())
+        
+        if not deck_ids:
+            return []
+            
+        # Apply daily limits per deck first
+        from ..utils.study_time import study_time
+        study_date = study_time.get_study_date(now_ts)
+        
+        # Calculate remaining daily limits across all decks
+        total_new_limit = 0
+        total_review_limit = 0
+        
+        for deck_id in deck_ids:
+            prefs = self.db.get_deck_preferences(deck_id)
+            daily_stats = self.db.get_daily_stats(deck_id, study_date)
+            
+            new_remaining = max(0, prefs.get('new_per_day', 20) - daily_stats['new_studied'])
+            rev_remaining = max(0, prefs.get('rev_per_day', 200) - daily_stats['rev_studied'])
+            
+            total_new_limit += new_remaining
+            total_review_limit += rev_remaining
+        
+        print(f"📊 Daily limits: {total_new_limit} new, {total_review_limit} review")
+        
+        # PHASE 1: Gather learning cards (time-critical, highest priority)
+        learning_cards = self.db.get_learning_cards(deck_ids, now_ts)
+        print(f"📚 Learning cards: {len(learning_cards)}")
+        
+        # PHASE 2: Gather review cards (up to daily limit)
+        review_cards = self.db.get_review_cards(deck_ids, now_ts, total_review_limit)
+        print(f"🔄 Review cards: {len(review_cards)}")
+        
+        # PHASE 3: Gather new cards (up to daily limit)  
+        new_cards = self.db.get_new_cards(deck_ids, total_new_limit)
+        print(f"✨ New cards: {len(new_cards)}")
+        
+        # PHASE 4: Apply sibling burying during collection
+        filtered_cards = self._apply_sibling_burying(learning_cards, review_cards, new_cards)
+        print(f"🚫 After sibling burying: {len(filtered_cards['learning'])} learning, {len(filtered_cards['review'])} review, {len(filtered_cards['new'])} new")
+        
+        # PHASE 5: Add fuzzing to prevent clustering  
+        fuzzed_cards = self._apply_anti_clustering_fuzz(filtered_cards)
+        
+        # PHASE 6: Merge with proper interleaving (Anki order)
+        session = self._interleave_anki_style(fuzzed_cards)
+        print(f"🎯 Final session: {len(session)} cards")
+        
+        return session
+
     def build_session(self, deck_ids: list[str], now_ts: Optional[int] = None,
                       max_new: Optional[int] = None, max_rev: Optional[int] = None) -> list[dict]:
         """Return a list of cards for today's session with daily limits."""
@@ -388,4 +441,121 @@ class Scheduler:
         if now_ts is None:
             now_ts = int(time.time())
         return self.db.get_stats_today(deck_ids, now_ts)
+    
+    # ========================================
+    # ANKI-STYLE QUEUE MANAGEMENT METHODS
+    # ========================================
+    
+    def _apply_sibling_burying(self, learning_cards: list[dict], review_cards: list[dict], new_cards: list[dict]) -> dict:
+        """Apply Anki's sibling burying rules during collection phase."""
+        # Only bury siblings if there are learning cards (Anki behavior)
+        if not learning_cards:
+            print("   📝 No learning cards - no sibling burying needed")
+            return {
+                'learning': learning_cards,
+                'review': review_cards,
+                'new': new_cards
+            }
+        
+        print(f"   🚫 Applying sibling burying for {len(learning_cards)} learning cards")
+        buried_notes = set()
+        
+        # Track which notes have cards in learning state (highest priority)
+        for card in learning_cards:
+            buried_notes.add(card['note_id'])
+        
+        # Filter review cards - remove siblings of learning cards
+        filtered_review = []
+        for card in review_cards:
+            if card['note_id'] not in buried_notes:
+                filtered_review.append(card)
+            else:
+                print(f"   🚫 Buried review card from learning note: {card['card_id'][:8]}...")
+        
+        # Filter new cards - remove siblings of learning cards  
+        filtered_new = []
+        for card in new_cards:
+            if card['note_id'] not in buried_notes:
+                filtered_new.append(card)
+            else:
+                print(f"   🚫 Buried new card from learning note: {card['card_id'][:8]}...")
+        
+        return {
+            'learning': learning_cards,  # Learning cards never buried
+            'review': filtered_review,
+            'new': filtered_new
+        }
+    
+    def _apply_anti_clustering_fuzz(self, card_groups: dict) -> dict:
+        """Add small random delays to prevent cards from clustering together."""
+        import random
+        
+        # Learning cards get up to 5 minutes of fuzz to prevent predictable ordering
+        for card in card_groups['learning']:
+            fuzz_seconds = random.randint(0, 300)  # 0-5 minutes
+            card['_fuzz_delay'] = fuzz_seconds
+            
+        # Sort learning cards by their fuzzed due time + fuzz
+        card_groups['learning'].sort(key=lambda c: c['due_ts'] + c.get('_fuzz_delay', 0))
+        
+        # Review and new cards get minimal shuffling within their groups
+        random.shuffle(card_groups['review'])
+        random.shuffle(card_groups['new'])
+        
+        return card_groups
+    
+    def _interleave_anki_style(self, card_groups: dict) -> list[dict]:
+        """Merge card groups using Anki's interleaving algorithm."""
+        session = []
+        
+        # Create working copies
+        learning_pool = card_groups['learning'].copy()
+        review_pool = card_groups['review'].copy() 
+        new_pool = card_groups['new'].copy()
+        
+        # Anki's interleaving pattern:
+        # Learning cards have highest priority and appear every few cards
+        # New cards are introduced gradually
+        # Review cards fill the gaps
+        
+        cards_since_learning = 0
+        learning_interval = 3  # Show learning card every ~3 cards
+        
+        while learning_pool or review_pool or new_pool:
+            # Priority 1: Learning cards (time-critical)
+            if learning_pool and (cards_since_learning >= learning_interval or (not review_pool and not new_pool)):
+                card = learning_pool.pop(0)
+                session.append(card)
+                cards_since_learning = 0
+                print(f"   📚 Added learning card: {card['card_id'][:8]}...")
+                
+            # Priority 2: Review cards (fill most slots)  
+            elif review_pool and (len(session) % 4 != 1):  # Skip every 4th slot for new cards
+                card = review_pool.pop(0)
+                session.append(card)
+                cards_since_learning += 1
+                print(f"   🔄 Added review card: {card['card_id'][:8]}...")
+                
+            # Priority 3: New cards (gradual introduction)
+            elif new_pool:
+                card = new_pool.pop(0)
+                session.append(card)
+                cards_since_learning += 1
+                print(f"   ✨ Added new card: {card['card_id'][:8]}...")
+                
+            # Fallback: any remaining cards
+            elif review_pool:
+                card = review_pool.pop(0)
+                session.append(card)
+                cards_since_learning += 1
+                
+            elif learning_pool:
+                card = learning_pool.pop(0)
+                session.append(card)
+                cards_since_learning = 0
+            else:
+                break
+                
+        print(f"   🎯 Interleaving complete: {len(session)} total cards")
+        return session
 

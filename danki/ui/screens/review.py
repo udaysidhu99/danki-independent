@@ -179,9 +179,7 @@ class ReviewScreen(QWidget):
         self.cards = cards
         self.current_card_index = 0
         self.current_deck_ids = deck_ids or []  # Track deck for dynamic rebuilding
-        self.reviewed_card_ids = set()  # Track reviewed cards to avoid immediate repeats
-        self.card_review_sequence = []  # Track review sequence for Anki-style interleaving
-        self.last_reviewed_note_id = None  # Track last note to prevent sibling cards
+        # Anki-style queue management handles all filtering at the scheduler level
         
         if cards:
             self.show_card(cards[0])
@@ -352,84 +350,14 @@ class ReviewScreen(QWidget):
         return "<br>".join(lines)
     
     def update_session_queue(self, new_cards):
-        """Update the session queue with newly due cards (dynamic Anki behavior)."""
-        print(f"\n🔄 UPDATE_SESSION_QUEUE called with {len(new_cards) if new_cards else 0} cards")
-        
+        """Update the session queue with newly due cards (Anki-style behavior)."""
         if not new_cards:
-            print("   No cards available - ending session")
             self.end_session_early()
             return
-            
-        # Filter out cards we just reviewed to avoid immediate repeats
-        filtered_cards = []
-        now = int(time.time())
         
-        # Track card review sequence to prevent immediate repetition (Anki-style interleaving)
-        if not hasattr(self, 'card_review_sequence'):
-            self.card_review_sequence = []
-        if not hasattr(self, 'last_reviewed_note_id'):
-            self.last_reviewed_note_id = None
-            
-        last_reviewed = self.card_review_sequence[-1] if self.card_review_sequence else None
-        print(f"   Last reviewed card: {last_reviewed[:8] + '...' if last_reviewed else 'None'}")
-        print(f"   Last reviewed note: {self.last_reviewed_note_id[:8] + '...' if self.last_reviewed_note_id else 'None'}")
-        print(f"   First card in new session: {new_cards[0]['card_id'][:8] + '...'}")
-        print(f"   Is same card? {new_cards[0]['card_id'] == last_reviewed if last_reviewed else False}")
-        
-        # Apply stricter filtering to prevent immediate repetition
-        for card in new_cards:
-            card_id = card['card_id']
-            card_state = card['state']
-            note_id = card.get('note_id')
-            
-            # For learning cards, ensure proper interleaving (not immediate repetition)
-            if card_state == 'learning':
-                # Get the last few reviewed cards for stricter filtering
-                recent_reviews = self.card_review_sequence[-2:] if len(self.card_review_sequence) >= 2 else self.card_review_sequence
-                last_reviewed_card = self.card_review_sequence[-1] if self.card_review_sequence else None
-                
-                # Never show the card that was just reviewed, even if no other options
-                if card_id == last_reviewed_card:
-                    print(f"   🚫 SKIPPING last reviewed card: {card_id[:8]}...")
-                    continue  # Skip this card completely
-                    
-                # Never show sibling cards (same note) immediately after
-                if note_id and note_id == self.last_reviewed_note_id:
-                    print(f"   🚫 SKIPPING sibling card from same note: {card_id[:8]}...")
-                    continue  # Skip sibling card
-                    
-                # For other recent cards, only include if due now or if we have few other options
-                if card_id in recent_reviews:
-                    # Only include if actually due now (not just due soon)
-                    if card['due_ts'] <= now:
-                        filtered_cards.append(card)
-                    # Or if we have very few other cards available (less than 2)
-                    elif len([c for c in new_cards if c['state'] != 'learning' and c['card_id'] not in self.reviewed_card_ids]) < 2:
-                        filtered_cards.append(card)
-                else:
-                    # Not recently reviewed, include it
-                    filtered_cards.append(card)
-            else:
-                # For new/review cards, also prevent sibling cards
-                if note_id and note_id == self.last_reviewed_note_id:
-                    print(f"   🚫 SKIPPING sibling {card_state} card from same note: {card_id[:8]}...")
-                    continue  # Skip sibling card
-                    
-                # Include new/review cards if not recently reviewed  
-                if not hasattr(self, 'reviewed_card_ids') or card_id not in self.reviewed_card_ids:
-                    filtered_cards.append(card)
-        
-        if not filtered_cards:
-            print("   No cards after filtering - ending session")
-            self.end_session_early()
-            return
-            
-        print(f"   Filtered to {len(filtered_cards)} cards")
-        print(f"   Next card will be: {filtered_cards[0]['card_id'][:8] + '...'}")
-        print(f"   Same as last reviewed? {filtered_cards[0]['card_id'] == last_reviewed if last_reviewed else False}")
-        
-        # Update session - this replaces the entire queue
-        self.cards = filtered_cards
+        # With Anki-style queue building, sibling burying is handled at the scheduler level
+        # No need for complex UI-level filtering - just use the session as provided
+        self.cards = new_cards
         self.current_card_index = 0
         
         # Show next card and update counters
@@ -462,22 +390,8 @@ class ReviewScreen(QWidget):
         current_time = int(time.time())
         card_id = self.current_card['card_id']
         
-        # Track this card as reviewed with timestamp
-        if hasattr(self, 'reviewed_card_ids'):
-            self.reviewed_card_ids.add(card_id)
-        
-        # Track review sequence for proper Anki-style interleaving
-        if not hasattr(self, 'card_review_sequence'):
-            self.card_review_sequence = []
-        self.card_review_sequence.append(card_id)
-        
-        # Track the note ID to prevent sibling cards from appearing immediately
-        if hasattr(self, 'current_card') and self.current_card:
-            self.last_reviewed_note_id = self.current_card.get('note_id')
-        
-        # Keep only recent reviews (last 10) to prevent memory buildup
-        if len(self.card_review_sequence) > 10:
-            self.card_review_sequence = self.card_review_sequence[-10:]
+        # With Anki-style queue management, tracking is handled at the scheduler level
+        # No need for complex UI-level tracking
         
         # Emit signal (triggers dynamic queue rebuild in main.py)
         self.card_rated.emit(card_id, rating, answer_ms)

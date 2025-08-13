@@ -205,6 +205,91 @@ class Database:
         self.conn.commit()
         return note_id
 
+    def get_learning_cards(self, deck_ids: List[str], now_ts: int) -> List[Dict]:
+        """Get learning cards due now or within session timeframe (Anki Phase 1)."""
+        if not deck_ids:
+            return []
+            
+        deck_placeholders = ",".join("?" for _ in deck_ids)
+        session_duration = 1800  # 30 minutes - include cards due during session
+        
+        query = f"""
+        SELECT c.*, n.front, n.back, n.meta, d.name as deck_name
+        FROM cards c
+        JOIN notes n ON c.note_id = n.id  
+        JOIN decks d ON n.deck_id = d.id
+        WHERE n.deck_id IN ({deck_placeholders})
+        AND c.state = 'learning'
+        AND c.due_ts <= ? + {session_duration}
+        ORDER BY c.due_ts
+        """
+        
+        rows = self.conn.execute(query, deck_ids + [now_ts]).fetchall()
+        return self._rows_to_card_dicts(rows)
+    
+    def get_review_cards(self, deck_ids: List[str], now_ts: int, limit: Optional[int] = None) -> List[Dict]:
+        """Get review cards due today (Anki Phase 2)."""
+        if not deck_ids:
+            return []
+            
+        deck_placeholders = ",".join("?" for _ in deck_ids)
+        limit_clause = f"LIMIT {limit}" if limit else ""
+        
+        query = f"""
+        SELECT c.*, n.front, n.back, n.meta, d.name as deck_name
+        FROM cards c
+        JOIN notes n ON c.note_id = n.id  
+        JOIN decks d ON n.deck_id = d.id
+        WHERE n.deck_id IN ({deck_placeholders})
+        AND c.state = 'review'
+        AND c.due_ts <= ?
+        ORDER BY c.due_ts
+        {limit_clause}
+        """
+        
+        rows = self.conn.execute(query, deck_ids + [now_ts]).fetchall()
+        return self._rows_to_card_dicts(rows)
+    
+    def get_new_cards(self, deck_ids: List[str], limit: Optional[int] = None) -> List[Dict]:
+        """Get new cards up to daily limit (Anki Phase 3)."""
+        if not deck_ids:
+            return []
+            
+        deck_placeholders = ",".join("?" for _ in deck_ids)
+        limit_clause = f"LIMIT {limit}" if limit else ""
+        
+        query = f"""
+        SELECT c.*, n.front, n.back, n.meta, d.name as deck_name
+        FROM cards c
+        JOIN notes n ON c.note_id = n.id  
+        JOIN decks d ON n.deck_id = d.id
+        WHERE n.deck_id IN ({deck_placeholders})
+        AND c.state = 'new'
+        ORDER BY c.id  -- Order added for consistent selection
+        {limit_clause}
+        """
+        
+        rows = self.conn.execute(query, deck_ids).fetchall()
+        return self._rows_to_card_dicts(rows)
+    
+    def _rows_to_card_dicts(self, rows) -> List[Dict]:
+        """Convert database rows to card dictionaries."""
+        return [{
+            "card_id": row["id"],
+            "note_id": row["note_id"],
+            "template": row["template"],
+            "front": row["front"],
+            "back": row["back"],
+            "meta": json.loads(row["meta"]) if row["meta"] else None,
+            "state": row["state"],
+            "due_ts": row["due_ts"],
+            "interval_days": row["interval_days"],
+            "ease": row["ease"],
+            "lapses": row["lapses"],
+            "step_index": row["step_index"],
+            "deck_name": row["deck_name"]
+        } for row in rows]
+
     def get_cards_for_review(self, deck_ids: List[str], now_ts: int,
                            max_new: Optional[int] = None, 
                            max_rev: Optional[int] = None) -> List[Dict]:

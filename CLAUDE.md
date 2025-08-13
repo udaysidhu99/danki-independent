@@ -139,8 +139,31 @@ SQLite with WAL mode for performance and safety:
 
 ### Next Priority (M2 Continued)
 - 🎯 **GUI Redesign**: Modern framework (Electron) with designer collaboration
+- 🎯 **Anki Scheduler Analysis**: Upgrade to battle-tested algorithms (SM-2+, FSRS)
 - 🎯 **Stats Dashboard**: Learning analytics, completion streaks, deck insights
 - 🎯 **Built-in CEFR Decks**: A1-B2 German vocabulary with import functionality
+
+### Anki Scheduler Analysis Project
+
+**Objective**: Analyze Anki's open-source scheduler to implement proven spaced repetition algorithms
+
+**Approach**: Deploy specialized Claude agent to analyze https://github.com/ankitects/anki
+- **Target Components**: `rslib/src/scheduler/` (Rust implementation)
+- **Key Algorithms**: Enhanced SM-2, FSRS (Free Spaced Repetition Scheduler)
+- **Advanced Features**: Sibling burying, filtered decks, advanced analytics
+
+**Documentation Structure**: [`docs/anki_analysis/`](./docs/anki_analysis/)
+- `anki_scheduler_analysis.md` - Complete system documentation
+- `anki_algorithm_comparison.md` - SM-2+ vs FSRS comparison
+- `anki_api_reference.md` - Key methods and data structures  
+- `implementation_recommendations.md` - Migration strategy for Danki
+
+**Implementation Phases**:
+1. **Phase 1**: Enhanced SM-2 with Anki's improvements
+2. **Phase 2**: Advanced features (sibling burying, better limits)
+3. **Phase 3**: FSRS algorithm integration with per-deck selection
+
+**Timeline**: Analysis 1-2 sessions, Implementation 3-4 sessions
 
 ### Data Formats
 

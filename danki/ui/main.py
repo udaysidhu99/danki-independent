@@ -123,7 +123,7 @@ class MainWindow(QMainWindow):
                 
             # Replace main content with review screen
             self.setCentralWidget(self.review_screen)
-            self.review_screen.start_review_session(cards)
+            self.review_screen.start_review_session(cards, deck_ids)
             
         except Exception as e:
             print(f"Error building review session: {e}")
@@ -166,14 +166,42 @@ class MainWindow(QMainWindow):
         self.add_cards_screen.refresh_decks()
         
     def on_card_rated(self, card_id, rating, answer_ms):
-        """Handle card rating during review."""
+        """Handle card rating during review with dynamic queue rebuilding."""
         try:
             # Convert rating to scheduler Rating enum
             scheduler_rating = Rating(rating)
             self.scheduler.review(card_id, scheduler_rating, answer_ms)
             print(f"Card {card_id} rated {rating} in {answer_ms}ms")
+            
+            # CRITICAL: Rebuild session queue dynamically (Anki behavior)
+            self.rebuild_review_queue()
+            
         except Exception as e:
             print(f"Error processing card rating: {e}")
+    
+    def rebuild_review_queue(self):
+        """Rebuild the review queue after each card to include newly due learning cards."""
+        try:
+            if not hasattr(self.review_screen, 'current_deck_ids'):
+                return
+                
+            # Get the deck being reviewed
+            deck_ids = getattr(self.review_screen, 'current_deck_ids', [])
+            if not deck_ids:
+                return
+            
+            # Build new session with current limits
+            new_cards = self.scheduler.build_session(deck_ids, max_new=10, max_rev=50)
+            
+            if new_cards:
+                # Update the review screen with refreshed queue
+                self.review_screen.update_session_queue(new_cards)
+            else:
+                # No more cards - end session
+                self.review_screen.end_session_early()
+                
+        except Exception as e:
+            print(f"Error rebuilding review queue: {e}")
         
 
 def main():

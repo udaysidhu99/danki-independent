@@ -214,18 +214,23 @@ class Database:
             
         deck_placeholders = ",".join("?" for _ in deck_ids)
         
+        # Include cards that are due now OR learning cards due within session timeframe
+        session_duration = 1800  # 30 minutes
         query = f"""
         SELECT c.*, n.front, n.back, n.meta, d.name as deck_name
         FROM cards c
         JOIN notes n ON c.note_id = n.id  
         JOIN decks d ON n.deck_id = d.id
         WHERE n.deck_id IN ({deck_placeholders})
-        AND c.due_ts <= ?
+        AND (
+            c.due_ts <= ? OR 
+            (c.state = 'learning' AND c.due_ts <= ? + {session_duration})
+        )
         AND c.state != 'suspended'
         ORDER BY c.due_ts
         """
         
-        rows = self.conn.execute(query, deck_ids + [now_ts]).fetchall()
+        rows = self.conn.execute(query, deck_ids + [now_ts, now_ts]).fetchall()
         
         return [{
             "card_id": row["id"],
@@ -369,8 +374,25 @@ class Database:
         else:
             # Return default preferences
             return {
-                "new_per_day": 10,
-                "rev_per_day": 100,
+                "new_per_day": 20,  # Anki default
+                "rev_per_day": 200,  # Anki default (10x new cards)
                 "steps_min": [1, 10],
                 "bidirectional_cards": True
             }
+
+    def update_deck_preferences(self, deck_id: str, preferences: Dict) -> None:
+        """Update deck preferences."""
+        # Get current preferences and merge with updates
+        current_prefs = self.get_deck_preferences(deck_id)
+        current_prefs.update(preferences)
+        
+        # Auto-calculate review limit based on new cards (Anki behavior)
+        if "new_per_day" in preferences:
+            current_prefs["rev_per_day"] = current_prefs["new_per_day"] * 10
+        
+        # Update database
+        self.conn.execute(
+            "UPDATE decks SET prefs = ? WHERE id = ?", 
+            (json.dumps(current_prefs), deck_id)
+        )
+        self.conn.commit()

@@ -124,7 +124,7 @@ class SchedulerIntegrationTester:
         
         # Rate as GOT_IT (should go to learning step 1 = 1 day)
         print("Rating as GOT_IT...")
-        self.scheduler.review(card_id, Rating.GOT_IT, 5000, self.time_sim.get_time())
+        self.scheduler.review(card_id, Rating.GOOD, 5000, self.time_sim.get_time())
         
         card = self.get_card_state(card_id)
         expected_due = self.time_sim.get_time() + (1440 * 60)  # 1 day
@@ -146,7 +146,7 @@ class SchedulerIntegrationTester:
         
         # Rate as GOT_IT again (should graduate to review)
         print("Rating as GOT_IT (graduation)...")
-        self.scheduler.review(card_id, Rating.GOT_IT, 3000, self.time_sim.get_time())
+        self.scheduler.review(card_id, Rating.GOOD, 3000, self.time_sim.get_time())
         
         card = self.get_card_state(card_id)
         print(f"After graduation: {card['state']}, interval={card['interval_days']} days")
@@ -176,7 +176,7 @@ class SchedulerIntegrationTester:
             print(f"Review {i+1}: Current interval = {intervals[-1]} days")
             
             # Rate as GOT_IT
-            self.scheduler.review(card_id, Rating.GOT_IT, 4000, self.time_sim.get_time())
+            self.scheduler.review(card_id, Rating.GOOD, 4000, self.time_sim.get_time())
             
             card = self.get_card_state(card_id)
             new_interval = card['interval_days']
@@ -218,7 +218,7 @@ class SchedulerIntegrationTester:
         
         # Rate as MISSED (lapse)
         print("Rating as MISSED (lapse)...")
-        self.scheduler.review(card_id, Rating.MISSED, 8000, self.time_sim.get_time())
+        self.scheduler.review(card_id, Rating.AGAIN, 8000, self.time_sim.get_time())
         
         card = self.get_card_state(card_id)
         print(f"After lapse: state={card['state']}, ease={card['ease']}, lapses={card['lapses']}")
@@ -233,9 +233,9 @@ class SchedulerIntegrationTester:
         self.time_sim.advance_minutes(10)  # First learning step
         
         # Rate learning steps as GOT_IT
-        self.scheduler.review(card_id, Rating.GOT_IT, 3000, self.time_sim.get_time())
+        self.scheduler.review(card_id, Rating.GOOD, 3000, self.time_sim.get_time())
         self.time_sim.advance_days(1)  # Second learning step
-        self.scheduler.review(card_id, Rating.GOT_IT, 2000, self.time_sim.get_time())
+        self.scheduler.review(card_id, Rating.GOOD, 2000, self.time_sim.get_time())
         
         recovered_card = self.get_card_state(card_id)
         print(f"After recovery: state={recovered_card['state']}, interval={recovered_card['interval_days']}")

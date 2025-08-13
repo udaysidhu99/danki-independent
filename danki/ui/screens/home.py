@@ -277,6 +277,7 @@ class HomeScreen(QWidget):
         
         # Add actions
         review_action = menu.addAction("📚 Start Review")
+        settings_action = menu.addAction("⚙️ Deck Settings")
         menu.addSeparator()
         delete_action = menu.addAction("🗑️ Delete Deck")
         
@@ -295,6 +296,8 @@ class HomeScreen(QWidget):
         
         if action == review_action:
             self.on_deck_selected(item)
+        elif action == settings_action:
+            self.show_deck_settings(deck_id, deck_name)
         elif action == delete_action:
             self.delete_deck(deck_id, deck_name)
             
@@ -339,6 +342,50 @@ class HomeScreen(QWidget):
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to delete deck: {str(e)}")
+    
+    def show_deck_settings(self, deck_id: str, deck_name: str):
+        """Show deck settings dialog."""
+        if not self.database:
+            return
+            
+        # Get current preferences
+        current_prefs = self.database.get_deck_preferences(deck_id)
+        current_new_per_day = current_prefs.get('new_per_day', 20)
+        
+        # Simple input dialog for new cards per day
+        new_per_day, ok = QInputDialog.getInt(
+            self,
+            f"Settings for '{deck_name}'",
+            f"New cards per day:\n(Reviews per day will be automatically set to {10} x new cards)",
+            current_new_per_day,
+            1,  # minimum
+            1000,  # maximum
+            1   # step
+        )
+        
+        if ok and new_per_day != current_new_per_day:
+            try:
+                # Update preferences
+                self.database.update_deck_preferences(deck_id, {
+                    'new_per_day': new_per_day
+                })
+                
+                # Show confirmation with auto-calculated review limit
+                calculated_rev = new_per_day * 10
+                QMessageBox.information(
+                    self, 
+                    "Settings Updated", 
+                    f"Settings updated for '{deck_name}':\n"
+                    f"• New cards per day: {new_per_day}\n"
+                    f"• Reviews per day: {calculated_rev} (automatic)\n\n"
+                    f"Changes will take effect on the next session."
+                )
+                
+                # Refresh deck list to show updated limits
+                self.refresh_deck_list()
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to update settings: {str(e)}")
     
     def set_database(self, database):
         """Set the database connection."""

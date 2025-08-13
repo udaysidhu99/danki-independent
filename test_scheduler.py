@@ -94,7 +94,7 @@ class SchedulerTester:
         card = MockCard(state='new')
         now = int(time.time())
         
-        result = self.scheduler._calculate_next_state(card.data, Rating.MISSED, now)
+        result = self.scheduler._calculate_next_state(card.data, Rating.AGAIN, now)
         
         self.assert_card_state(result, 'learning', 1 * 60, 0)  # 1 minute
     
@@ -103,35 +103,35 @@ class SchedulerTester:
         card = MockCard(state='new')
         now = int(time.time())
         
-        result = self.scheduler._calculate_next_state(card.data, Rating.ALMOST, now)
+        result = self.scheduler._calculate_next_state(card.data, Rating.HARD, now)
         
         self.assert_card_state(result, 'learning', 1 * 60, 0)  # 1 minute
     
     def test_new_card_got_it(self):
-        """New card rated GOT_IT should go to learning step 1 (1 day)."""
+        """New card rated GOOD should start learning at step 0 (1 minute)."""
         card = MockCard(state='new')
         now = int(time.time())
         
-        result = self.scheduler._calculate_next_state(card.data, Rating.GOT_IT, now)
+        result = self.scheduler._calculate_next_state(card.data, Rating.GOOD, now)
         
-        self.assert_card_state(result, 'learning', 10 * 60, 0)  # 10 minutes
+        self.assert_card_state(result, 'learning', 1 * 60, 0)  # 1 minute
     
     # LEARNING CARD TESTS
     def test_learning_step_0_missed(self):
-        """Learning step 0 rated MISSED should reset to step 0 (10 min)."""
+        """Learning step 0 rated AGAIN should reset to step 0 (1 min)."""
         card = MockCard(state='learning', step_index=0)
         now = int(time.time())
         
-        result = self.scheduler._calculate_next_state(card.data, Rating.MISSED, now)
+        result = self.scheduler._calculate_next_state(card.data, Rating.AGAIN, now)
         
-        self.assert_card_state(result, 'learning', 10 * 60, 0)
+        self.assert_card_state(result, 'learning', 1 * 60, 0)
     
     def test_learning_step_0_almost(self):
-        """Learning step 0 rated ALMOST should stay at step 0 (10 min)."""
+        """Learning step 0 rated HARD should stay at step 0 (10 min minimum)."""
         card = MockCard(state='learning', step_index=0)
         now = int(time.time())
         
-        result = self.scheduler._calculate_next_state(card.data, Rating.ALMOST, now)
+        result = self.scheduler._calculate_next_state(card.data, Rating.HARD, now)
         
         self.assert_card_state(result, 'learning', 10 * 60, 0)
     
@@ -140,25 +140,25 @@ class SchedulerTester:
         card = MockCard(state='learning', step_index=0)
         now = int(time.time())
         
-        result = self.scheduler._calculate_next_state(card.data, Rating.GOT_IT, now)
+        result = self.scheduler._calculate_next_state(card.data, Rating.GOOD, now)
         
         self.assert_card_state(result, 'learning', 10 * 60, 0)
     
     def test_learning_step_1_missed(self):
-        """Learning step 1 rated MISSED should reset to step 0 (10 min)."""
+        """Learning step 1 rated AGAIN should reset to step 0 (1 min)."""
         card = MockCard(state='learning', step_index=1)
         now = int(time.time())
         
-        result = self.scheduler._calculate_next_state(card.data, Rating.MISSED, now)
+        result = self.scheduler._calculate_next_state(card.data, Rating.AGAIN, now)
         
-        self.assert_card_state(result, 'learning', 10 * 60, 0)
+        self.assert_card_state(result, 'learning', 1 * 60, 0)
     
     def test_learning_step_1_almost(self):
         """Learning step 1 rated ALMOST should stay at step 1 (1 day)."""
         card = MockCard(state='learning', step_index=1)
         now = int(time.time())
         
-        result = self.scheduler._calculate_next_state(card.data, Rating.ALMOST, now)
+        result = self.scheduler._calculate_next_state(card.data, Rating.HARD, now)
         
         self.assert_card_state(result, 'learning', 10 * 60, 0)
     
@@ -167,9 +167,16 @@ class SchedulerTester:
         card = MockCard(state='learning', step_index=1)
         now = int(time.time())
         
-        result = self.scheduler._calculate_next_state(card.data, Rating.GOT_IT, now)
+        result = self.scheduler._calculate_next_state(card.data, Rating.GOOD, now)
         
-        self.assert_card_state(result, 'review', 24 * 3600, 1.0)  # 1 day interval
+        # With fuzzing, graduation interval ~1 day (±5%)
+        state, due_ts, interval, ease, lapses, step_index = result
+        now = int(time.time())
+        expected_due = now + (24 * 3600)  # 1 day
+        
+        assert state == 'review', f"Expected 'review', got '{state}'"
+        assert 0.95 <= interval <= 1.05, f"Expected interval ~1.0 (±5%), got {interval}"
+        assert abs(due_ts - expected_due) <= (0.05 * 24 * 3600), f"Due time within fuzzing range"
     
     # REVIEW CARD TESTS
     def test_review_missed_lapse(self):
@@ -177,7 +184,7 @@ class SchedulerTester:
         card = MockCard(state='review', ease=2.5, interval_days=5.0)
         now = int(time.time())
         
-        result = self.scheduler._calculate_next_state(card.data, Rating.MISSED, now)
+        result = self.scheduler._calculate_next_state(card.data, Rating.AGAIN, now)
         
         state, due_ts, interval, ease, lapses, step_index = result
         
@@ -191,26 +198,30 @@ class SchedulerTester:
         card = MockCard(state='review', ease=2.5, interval_days=5.0)
         now = int(time.time())
         
-        result = self.scheduler._calculate_next_state(card.data, Rating.ALMOST, now)
+        result = self.scheduler._calculate_next_state(card.data, Rating.HARD, now)
         
         state, due_ts, interval, ease, lapses, step_index = result
         
         assert state == 'review', f"Expected 'review', got '{state}'"
         assert ease == 2.35, f"Expected ease=2.35, got {ease}"  # 2.5 - 0.15
-        assert interval == 6.0, f"Expected interval=6.0, got {interval}"  # 5.0 * 1.2
+        # Allow for fuzzing (±5%)
+        expected = 6.0  # 5.0 * 1.2
+        assert 5.7 <= interval <= 6.3, f"Expected interval ~6.0 (±5%), got {interval}"
     
     def test_review_got_it_good(self):
         """Review card rated GOT_IT should maintain ease and multiply by ease factor."""
         card = MockCard(state='review', ease=2.5, interval_days=5.0)
         now = int(time.time())
         
-        result = self.scheduler._calculate_next_state(card.data, Rating.GOT_IT, now)
+        result = self.scheduler._calculate_next_state(card.data, Rating.GOOD, now)
         
         state, due_ts, interval, ease, lapses, step_index = result
         
         assert state == 'review', f"Expected 'review', got '{state}'"
         assert ease == 2.5, f"Expected ease=2.5, got {ease}"  # Unchanged
-        assert interval == 12.5, f"Expected interval=12.5, got {interval}"  # 5.0 * 2.5
+        # Allow for fuzzing (±5%)
+        expected = 12.5  # 5.0 * 2.5
+        assert 11.9 <= interval <= 13.1, f"Expected interval ~12.5 (±5%), got {interval}"
     
     def test_ease_floor_enforcement(self):
         """Ease should never go below 1.3."""
@@ -218,7 +229,7 @@ class SchedulerTester:
         now = int(time.time())
         
         # Multiple missed reviews should not push ease below 1.3
-        result = self.scheduler._calculate_next_state(card.data, Rating.MISSED, now)
+        result = self.scheduler._calculate_next_state(card.data, Rating.AGAIN, now)
         state, due_ts, interval, ease, lapses, step_index = result
         
         assert ease >= 1.3, f"Expected ease >= 1.3, got {ease}"
@@ -228,7 +239,7 @@ class SchedulerTester:
         card = MockCard(state='review', ease=1.3, interval_days=0.5)
         now = int(time.time())
         
-        result = self.scheduler._calculate_next_state(card.data, Rating.ALMOST, now)
+        result = self.scheduler._calculate_next_state(card.data, Rating.HARD, now)
         state, due_ts, interval, ease, lapses, step_index = result
         
         assert interval >= 1.0, f"Expected interval >= 1.0, got {interval}"

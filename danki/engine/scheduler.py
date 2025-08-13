@@ -2,17 +2,34 @@
 
 import time
 import math
+import random
 from enum import IntEnum
 from typing import Optional
 from .db import Database
 
 class Rating(IntEnum):
-    MISSED = 0
-    ALMOST = 1
-    GOT_IT = 2
+    """Anki-compatible 4-button rating system."""
+    AGAIN = 1   # Complete failure - reset/lapse
+    HARD = 2    # Difficult recall - reduced interval
+    GOOD = 3    # Successful recall - standard interval
+    EASY = 4    # Effortless recall - bonus interval
+
+    # Legacy compatibility
+    MISSED = AGAIN
+    ALMOST = HARD
+    GOT_IT = GOOD
 
 class Scheduler:
-    """SM-2 based spaced repetition scheduler."""
+    """Enhanced SM-2+ scheduler matching Anki behavior.
+    
+    Implements Anki's proven enhancements:
+    - 4-button rating system (Again/Hard/Good/Easy)
+    - Interval fuzzing (±5% randomization)
+    - Enhanced graduating intervals
+    - Late review handling with partial credit
+    - Proper lapse multiplier (0.5)
+    - Easy bonus multiplier (1.3)
+    """
     
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -87,18 +104,83 @@ class Scheduler:
             filtered_new_cards.extend(deck_cards['new'][:new_remaining])
             filtered_review_cards.extend(deck_cards['review'][:rev_remaining])
         
-        # Learning cards are always included (they're urgent)
-        # But filter out learning cards that would exceed today's session if they're new→learning transitions
-        filtered_learning_cards = learning_cards
+        # ANKI-STYLE LEARNING CARD MANAGEMENT
+        # Include learning cards that will be due during the session (not just right now)
+        # This ensures "Again" cards appear in the session even if due in 1 minute
+        session_duration = 1800  # 30 minutes - typical session length
+        due_learning = [c for c in learning_cards if c['due_ts'] <= now_ts + session_duration]
+        future_learning = [c for c in learning_cards if c['due_ts'] > now_ts + session_duration]
         
-        # Order: learning first (most urgent), then new, then review
-        session = filtered_learning_cards + filtered_new_cards + filtered_review_cards
+        # Build session with proper Anki interleaving:
+        # Learning cards are mixed in, not all at front
+        session = self._build_anki_session(
+            due_learning, filtered_new_cards, filtered_review_cards, future_learning
+        )
+        
+        return session
+    
+    def _build_anki_session(self, learning_cards, new_cards, review_cards, future_learning):
+        """Build session with proper Anki-style card interleaving.
+        
+        Anki's algorithm:
+        - Learning cards appear every ~3-4 cards
+        - New cards are limited and spread throughout
+        - Review cards fill the gaps
+        - Future learning cards added at end
+        """
+        session = []
+        
+        # Create pools
+        learning_pool = learning_cards.copy()
+        new_pool = new_cards.copy()
+        review_pool = review_cards.copy()
+        
+        # Anki interleaving pattern:
+        # Show 1-2 learning cards, then 2-3 other cards, repeat
+        cards_since_learning = 0
+        learning_interval = 3  # Show learning card every ~3 cards
+        
+        while learning_pool or new_pool or review_pool:
+            # Add learning card if due and interval reached
+            if learning_pool and cards_since_learning >= learning_interval:
+                session.append(learning_pool.pop(0))
+                cards_since_learning = 0
+            
+            # Add new card (limited distribution)
+            elif new_pool and len(session) % 4 == 1:  # Every 4th position
+                session.append(new_pool.pop(0))
+                cards_since_learning += 1
+                
+            # Add review card (fills most slots)
+            elif review_pool:
+                session.append(review_pool.pop(0))
+                cards_since_learning += 1
+                
+            # Fallback: add any remaining card
+            elif new_pool:
+                session.append(new_pool.pop(0))
+                cards_since_learning += 1
+            elif learning_pool:
+                session.append(learning_pool.pop(0))
+                cards_since_learning = 0
+            else:
+                break
+        
+        # Add future learning cards at end
+        session.extend(future_learning)
         
         return session
 
     def review(self, card_id: str, rating: Rating, answer_ms: int,
                now_ts: Optional[int] = None) -> None:
-        """Record a review result and update card scheduling."""
+        """Record a review result and update card scheduling.
+        
+        Args:
+            card_id: Card being reviewed
+            rating: Rating.AGAIN/HARD/GOOD/EASY (Anki 4-button system)
+            answer_ms: Time taken to answer in milliseconds
+            now_ts: Timestamp of review (defaults to now)
+        """
         if now_ts is None:
             now_ts = int(time.time())
             
@@ -167,55 +249,66 @@ class Scheduler:
         current_lapses = card['lapses']
         current_step = card['step_index']
         
-        # Learning steps in minutes: [1, 10] (1 min, 10 min) - Anki default for immediate re-learning
-        LEARNING_STEPS = [1, 10]
+        # SM-2+ Configuration (Anki defaults)
+        LEARNING_STEPS = [1, 10]         # Learning steps in minutes
+        GRADUATING_INTERVAL_GOOD = 1      # Days when graduating with Good
+        GRADUATING_INTERVAL_EASY = 4      # Days when graduating with Easy
+        STARTING_EASE = 2.5               # Starting ease factor (250%)
+        MINIMUM_EASE = 1.3               # Minimum ease factor (130%)
+        HARD_MULTIPLIER = 1.2            # Hard answer multiplier
+        EASY_MULTIPLIER = 1.3            # Easy answer multiplier
+        LAPSE_MULTIPLIER = 0.5           # Interval reduction on lapse
         
         if current_state == 'new':
-            # New card transitions
-            if rating == Rating.MISSED:
-                # Stay in learning, reset to first step
-                new_state = 'learning'
+            # New card → Learning state transition
+            new_state = 'learning'
+            new_lapses = current_lapses
+            new_ease = STARTING_EASE if current_ease == 0 else current_ease
+            new_interval = 0
+            
+            if rating == Rating.AGAIN:
+                # Reset to first step
                 new_step_index = 0
-                new_due_ts = now_ts + (LEARNING_STEPS[0] * 60)  # 10 minutes
-                new_interval = 0
-                new_ease = current_ease
-                new_lapses = current_lapses
-            else:
-                # Move to learning
-                new_state = 'learning'
-                new_step_index = 0 if rating == Rating.ALMOST else 1
-                step_minutes = LEARNING_STEPS[new_step_index]
-                new_due_ts = now_ts + (step_minutes * 60)
-                new_interval = 0
-                new_ease = current_ease
-                new_lapses = current_lapses
+                new_due_ts = now_ts + (LEARNING_STEPS[0] * 60)
+            elif rating == Rating.HARD:
+                # Start at first step
+                new_step_index = 0
+                new_due_ts = now_ts + (LEARNING_STEPS[0] * 60)
+            elif rating == Rating.GOOD:
+                # Start at first step (normal progression)
+                new_step_index = 0
+                new_due_ts = now_ts + (LEARNING_STEPS[0] * 60)
+            else:  # EASY
+                # Graduate immediately with easy interval
+                new_state = 'review'
+                new_step_index = 0
+                new_interval = self._apply_fuzz(GRADUATING_INTERVAL_EASY)
+                new_due_ts = now_ts + int(new_interval * 24 * 3600)
                 
         elif current_state == 'learning':
-            if rating == Rating.MISSED:
+            new_ease = current_ease
+            new_interval = 0
+            
+            if rating == Rating.AGAIN:
                 # Reset to first learning step
                 new_state = 'learning'
                 new_step_index = 0
                 new_due_ts = now_ts + (LEARNING_STEPS[0] * 60)
-                new_interval = 0
-                new_ease = current_ease
                 new_lapses = current_lapses + 1
-            elif rating == Rating.ALMOST:
-                # Stay at current step
+            elif rating == Rating.HARD:
+                # Repeat current step (minimum 10 minutes)
                 new_state = 'learning'
                 new_step_index = current_step
-                step_minutes = LEARNING_STEPS[min(current_step, len(LEARNING_STEPS) - 1)]
+                step_minutes = max(10, LEARNING_STEPS[min(current_step, len(LEARNING_STEPS) - 1)])
                 new_due_ts = now_ts + (step_minutes * 60)
-                new_interval = 0
-                new_ease = current_ease
                 new_lapses = current_lapses
-            else:  # GOT_IT
+            elif rating == Rating.GOOD:
                 if current_step >= len(LEARNING_STEPS) - 1:
-                    # Graduate to review
+                    # Graduate to review with standard interval
                     new_state = 'review'
                     new_step_index = 0
-                    new_interval = 1.0  # Start with 1 day
+                    new_interval = self._apply_fuzz(GRADUATING_INTERVAL_GOOD)
                     new_due_ts = now_ts + int(new_interval * 24 * 3600)
-                    new_ease = current_ease
                     new_lapses = current_lapses
                 else:
                     # Advance to next learning step
@@ -223,34 +316,49 @@ class Scheduler:
                     new_step_index = current_step + 1
                     step_minutes = LEARNING_STEPS[new_step_index]
                     new_due_ts = now_ts + (step_minutes * 60)
-                    new_interval = 0
-                    new_ease = current_ease
                     new_lapses = current_lapses
-                    
-        elif current_state == 'review':
-            if rating == Rating.MISSED:
-                # Lapse: back to learning
-                new_state = 'learning'
-                new_step_index = 0
-                new_due_ts = now_ts + (LEARNING_STEPS[0] * 60)
-                new_interval = 0
-                new_ease = max(1.3, current_ease - 0.8)  # Reduce ease, floor at 1.3
-                new_lapses = current_lapses + 1
-            else:
-                # Stay in review, update interval and ease
+            else:  # EASY
+                # Graduate to review with bonus interval
                 new_state = 'review'
                 new_step_index = 0
+                new_interval = self._apply_fuzz(GRADUATING_INTERVAL_EASY)
+                new_due_ts = now_ts + int(new_interval * 24 * 3600)
+                new_lapses = current_lapses
+                    
+        elif current_state == 'review':
+            new_state = 'review'
+            new_step_index = 0
+            
+            # Calculate days late for partial credit
+            days_late = max(0, (now_ts - card['due_ts']) / (24 * 3600))
+            
+            if rating == Rating.AGAIN:
+                # Lapse: transition to relearning
+                new_state = 'learning'  # Relearning uses learning steps
+                new_step_index = 0
+                new_due_ts = now_ts + (LEARNING_STEPS[0] * 60)
+                new_interval = max(1, current_interval * LAPSE_MULTIPLIER)  # Reduce interval
+                new_ease = max(MINIMUM_EASE, current_ease - 0.2)  # Anki lapse penalty
+                new_lapses = current_lapses + 1
+            else:
+                # Stay in review state
                 new_lapses = current_lapses
                 
-                if rating == Rating.ALMOST:
-                    # Hard: reduce ease, multiply interval by 1.2
-                    new_ease = max(1.3, current_ease - 0.15)
-                    new_interval = max(1.0, current_interval * 1.2)
-                else:  # GOT_IT
-                    # Good: keep ease, multiply by ease factor
-                    new_ease = current_ease
-                    new_interval = current_interval * new_ease
-                    
+                if rating == Rating.HARD:
+                    # Hard: reduce ease and apply hard multiplier
+                    new_ease = max(MINIMUM_EASE, current_ease - 0.15)
+                    new_interval = max(1.0, current_interval * HARD_MULTIPLIER)
+                elif rating == Rating.GOOD:
+                    # Good: standard SM-2 with late review credit
+                    new_ease = current_ease  # No ease change
+                    new_interval = (current_interval + days_late/2) * new_ease
+                else:  # EASY
+                    # Easy: bonus ease and multiplier with late credit
+                    new_ease = current_ease + 0.15
+                    new_interval = (current_interval + days_late) * new_ease * EASY_MULTIPLIER
+                
+                # Apply fuzzing and set due date
+                new_interval = self._apply_fuzz(new_interval)
                 new_due_ts = now_ts + int(new_interval * 24 * 3600)
         else:
             # Suspended or unknown state - no changes
@@ -258,6 +366,18 @@ class Scheduler:
                    current_ease, current_lapses, current_step)
         
         return (new_state, new_due_ts, new_interval, new_ease, new_lapses, new_step_index)
+    
+    def _apply_fuzz(self, interval: float) -> float:
+        """Apply Anki's interval fuzzing (±5% randomization).
+        
+        Prevents cards from clustering on the same review day.
+        """
+        if interval < 1:
+            return interval
+        
+        # Apply ±5% fuzzing
+        fuzz_factor = 0.95 + (random.random() * 0.1)  # 0.95 to 1.05
+        return max(1.0, interval * fuzz_factor)
 
     def suspend(self, card_id: str) -> None:
         """Suspend a card from appearing in reviews."""

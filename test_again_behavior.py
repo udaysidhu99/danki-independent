@@ -36,7 +36,7 @@ def test_again_behavior():
     
     # Hit "Again" (MISSED rating)
     print(f"\n❌ Rating card as MISSED (Again)...")
-    scheduler.review(card_id, Rating.MISSED, 5000)  # 5 second answer time
+    scheduler.review(card_id, Rating.AGAIN, 5000)  # 5 second answer time
     
     # Check new due time
     updated_card = scheduler._get_card(card_id)

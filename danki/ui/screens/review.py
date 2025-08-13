@@ -48,14 +48,12 @@ class ReviewScreen(QWidget):
         
         header_layout.addSpacing(10)
         
-        self.progress_label = QLabel("Card 1 of 10")
-        header_layout.addWidget(self.progress_label)
+        # Anki-style counters: New + Learning + Review
+        self.anki_counters = QLabel("New: 0 • Learning: 0 • Review: 0")
+        self.anki_counters.setStyleSheet("QLabel { color: #555; font-weight: bold; }")
+        header_layout.addWidget(self.anki_counters)
         
         layout.addLayout(header_layout)
-        
-        # Progress bar
-        self.progress_bar = QProgressBar()
-        layout.addWidget(self.progress_bar)
         
         layout.addSpacing(20)
         
@@ -118,26 +116,32 @@ class ReviewScreen(QWidget):
         self.show_answer_button.setMinimumHeight(40)
         button_layout.addWidget(self.show_answer_button)
         
-        # Rating buttons (hidden initially)
+        # Rating buttons (hidden initially) - Anki 4-button system
         rating_layout = QHBoxLayout()
         
-        self.missed_button = QPushButton("Missed (1)")
-        self.missed_button.clicked.connect(lambda: self.rate_card(0))
-        self.missed_button.setStyleSheet("QPushButton { background-color: #ff6b6b; }")
-        self.missed_button.hide()
-        rating_layout.addWidget(self.missed_button)
+        self.again_button = QPushButton("Again (1)")
+        self.again_button.clicked.connect(lambda: self.rate_card(1))
+        self.again_button.setStyleSheet("QPushButton { background-color: #ff4757; color: white; min-height: 40px; }")
+        self.again_button.hide()
+        rating_layout.addWidget(self.again_button)
         
-        self.almost_button = QPushButton("Almost (2)")
-        self.almost_button.clicked.connect(lambda: self.rate_card(1))
-        self.almost_button.setStyleSheet("QPushButton { background-color: #feca57; }")
-        self.almost_button.hide()
-        rating_layout.addWidget(self.almost_button)
+        self.hard_button = QPushButton("Hard (2)")
+        self.hard_button.clicked.connect(lambda: self.rate_card(2))
+        self.hard_button.setStyleSheet("QPushButton { background-color: #ffa502; color: white; min-height: 40px; }")
+        self.hard_button.hide()
+        rating_layout.addWidget(self.hard_button)
         
-        self.got_it_button = QPushButton("Got It (3)")
-        self.got_it_button.clicked.connect(lambda: self.rate_card(2))
-        self.got_it_button.setStyleSheet("QPushButton { background-color: #48dbfb; }")
-        self.got_it_button.hide()
-        rating_layout.addWidget(self.got_it_button)
+        self.good_button = QPushButton("Good (3)")
+        self.good_button.clicked.connect(lambda: self.rate_card(3))
+        self.good_button.setStyleSheet("QPushButton { background-color: #2ed573; color: white; min-height: 40px; }")
+        self.good_button.hide()
+        rating_layout.addWidget(self.good_button)
+        
+        self.easy_button = QPushButton("Easy (4)")
+        self.easy_button.clicked.connect(lambda: self.rate_card(4))
+        self.easy_button.setStyleSheet("QPushButton { background-color: #1e90ff; color: white; min-height: 40px; }")
+        self.easy_button.hide()
+        rating_layout.addWidget(self.easy_button)
         
         button_layout.addLayout(rating_layout)
         layout.addWidget(self.button_frame)
@@ -147,30 +151,38 @@ class ReviewScreen(QWidget):
         self.setLayout(layout)
         
     def setup_shortcuts(self):
-        """Set up keyboard shortcuts."""
+        """Set up keyboard shortcuts for Anki-compatible interface."""
         # Space to show answer
         space_shortcut = QShortcut(QKeySequence(Qt.Key_Space), self)
         space_shortcut.activated.connect(self.handle_space_key)
         
-        # Number keys for rating
+        # Number keys for rating (Anki 4-button system)
         one_shortcut = QShortcut(QKeySequence(Qt.Key_1), self)
-        one_shortcut.activated.connect(lambda: self.rate_card(0))
+        one_shortcut.activated.connect(lambda: self.rate_card(1))  # Again
         
         two_shortcut = QShortcut(QKeySequence(Qt.Key_2), self)
-        two_shortcut.activated.connect(lambda: self.rate_card(1))
+        two_shortcut.activated.connect(lambda: self.rate_card(2))  # Hard
         
         three_shortcut = QShortcut(QKeySequence(Qt.Key_3), self)
-        three_shortcut.activated.connect(lambda: self.rate_card(2))
+        three_shortcut.activated.connect(lambda: self.rate_card(3))  # Good
+        
+        four_shortcut = QShortcut(QKeySequence(Qt.Key_4), self)
+        four_shortcut.activated.connect(lambda: self.rate_card(4))  # Easy
         
     def handle_space_key(self):
         """Handle space key press - show answer or do nothing if answer already shown."""
         if not self.is_answer_shown:
             self.show_answer()
             
-    def start_review_session(self, cards):
+    def start_review_session(self, cards, deck_ids=None):
         """Start a review session with the given cards."""
         self.cards = cards
         self.current_card_index = 0
+        self.current_deck_ids = deck_ids or []  # Track deck for dynamic rebuilding
+        self.reviewed_card_ids = set()  # Track reviewed cards to avoid immediate repeats
+        self.card_review_sequence = []  # Track review sequence for Anki-style interleaving
+        self.last_reviewed_note_id = None  # Track last note to prevent sibling cards
+        
         if cards:
             self.show_card(cards[0])
             self.update_progress()
@@ -190,9 +202,10 @@ class ReviewScreen(QWidget):
         
         # Hide back and rating buttons
         self.back_widget.hide()
-        self.missed_button.hide()
-        self.almost_button.hide()
-        self.got_it_button.hide()
+        self.again_button.hide()
+        self.hard_button.hide()
+        self.good_button.hide()
+        self.easy_button.hide()
         
         # Show the show answer button
         self.show_answer_button.show()
@@ -235,9 +248,10 @@ class ReviewScreen(QWidget):
         
         # Hide show answer button, show rating buttons
         self.show_answer_button.hide()
-        self.missed_button.show()
-        self.almost_button.show()
-        self.got_it_button.show()
+        self.again_button.show()
+        self.hard_button.show()
+        self.good_button.show()
+        self.easy_button.show()
 
     def _show_back_content(self, card):
         """Display formatted back content based on card template direction."""
@@ -336,6 +350,107 @@ class ReviewScreen(QWidget):
             lines.extend(examples[:2])  # Show max 2 examples
         
         return "<br>".join(lines)
+    
+    def update_session_queue(self, new_cards):
+        """Update the session queue with newly due cards (dynamic Anki behavior)."""
+        print(f"\n🔄 UPDATE_SESSION_QUEUE called with {len(new_cards) if new_cards else 0} cards")
+        
+        if not new_cards:
+            print("   No cards available - ending session")
+            self.end_session_early()
+            return
+            
+        # Filter out cards we just reviewed to avoid immediate repeats
+        filtered_cards = []
+        now = int(time.time())
+        
+        # Track card review sequence to prevent immediate repetition (Anki-style interleaving)
+        if not hasattr(self, 'card_review_sequence'):
+            self.card_review_sequence = []
+        if not hasattr(self, 'last_reviewed_note_id'):
+            self.last_reviewed_note_id = None
+            
+        last_reviewed = self.card_review_sequence[-1] if self.card_review_sequence else None
+        print(f"   Last reviewed card: {last_reviewed[:8] + '...' if last_reviewed else 'None'}")
+        print(f"   Last reviewed note: {self.last_reviewed_note_id[:8] + '...' if self.last_reviewed_note_id else 'None'}")
+        print(f"   First card in new session: {new_cards[0]['card_id'][:8] + '...'}")
+        print(f"   Is same card? {new_cards[0]['card_id'] == last_reviewed if last_reviewed else False}")
+        
+        # Apply stricter filtering to prevent immediate repetition
+        for card in new_cards:
+            card_id = card['card_id']
+            card_state = card['state']
+            note_id = card.get('note_id')
+            
+            # For learning cards, ensure proper interleaving (not immediate repetition)
+            if card_state == 'learning':
+                # Get the last few reviewed cards for stricter filtering
+                recent_reviews = self.card_review_sequence[-2:] if len(self.card_review_sequence) >= 2 else self.card_review_sequence
+                last_reviewed_card = self.card_review_sequence[-1] if self.card_review_sequence else None
+                
+                # Never show the card that was just reviewed, even if no other options
+                if card_id == last_reviewed_card:
+                    print(f"   🚫 SKIPPING last reviewed card: {card_id[:8]}...")
+                    continue  # Skip this card completely
+                    
+                # Never show sibling cards (same note) immediately after
+                if note_id and note_id == self.last_reviewed_note_id:
+                    print(f"   🚫 SKIPPING sibling card from same note: {card_id[:8]}...")
+                    continue  # Skip sibling card
+                    
+                # For other recent cards, only include if due now or if we have few other options
+                if card_id in recent_reviews:
+                    # Only include if actually due now (not just due soon)
+                    if card['due_ts'] <= now:
+                        filtered_cards.append(card)
+                    # Or if we have very few other cards available (less than 2)
+                    elif len([c for c in new_cards if c['state'] != 'learning' and c['card_id'] not in self.reviewed_card_ids]) < 2:
+                        filtered_cards.append(card)
+                else:
+                    # Not recently reviewed, include it
+                    filtered_cards.append(card)
+            else:
+                # For new/review cards, also prevent sibling cards
+                if note_id and note_id == self.last_reviewed_note_id:
+                    print(f"   🚫 SKIPPING sibling {card_state} card from same note: {card_id[:8]}...")
+                    continue  # Skip sibling card
+                    
+                # Include new/review cards if not recently reviewed  
+                if not hasattr(self, 'reviewed_card_ids') or card_id not in self.reviewed_card_ids:
+                    filtered_cards.append(card)
+        
+        if not filtered_cards:
+            print("   No cards after filtering - ending session")
+            self.end_session_early()
+            return
+            
+        print(f"   Filtered to {len(filtered_cards)} cards")
+        print(f"   Next card will be: {filtered_cards[0]['card_id'][:8] + '...'}")
+        print(f"   Same as last reviewed? {filtered_cards[0]['card_id'] == last_reviewed if last_reviewed else False}")
+        
+        # Update session - this replaces the entire queue
+        self.cards = filtered_cards
+        self.current_card_index = 0
+        
+        # Show next card and update counters
+        self.show_card(self.cards[0])
+        self.update_progress()
+    
+    def end_session_early(self):
+        """End the session when no more cards are available."""
+        self.front_label.setText("🎉 Review session complete!")
+        self.back_widget.hide()
+        self.show_answer_button.hide()
+        self.again_button.hide()
+        self.hard_button.hide()
+        self.good_button.hide()
+        self.easy_button.hide()
+        
+        # Show final counters (all zeros)
+        self.anki_counters.setText("New: 0 • Learning: 0 • Review: 0")
+        
+        # Emit completion signal after a short delay
+        QTimer.singleShot(2000, self.review_finished.emit)
         
     def rate_card(self, rating):
         """Rate the current card and move to next."""
@@ -344,51 +459,66 @@ class ReviewScreen(QWidget):
             
         # Calculate answer time
         answer_ms = int((time.time() - self.card_shown_at) * 1000)
+        current_time = int(time.time())
+        card_id = self.current_card['card_id']
         
-        # Emit signal
-        self.card_rated.emit(self.current_card['card_id'], rating, answer_ms)
+        # Track this card as reviewed with timestamp
+        if hasattr(self, 'reviewed_card_ids'):
+            self.reviewed_card_ids.add(card_id)
         
-        # Move to next card
-        self.current_card_index += 1
-        if self.current_card_index < len(self.cards):
-            self.show_card(self.cards[self.current_card_index])
-            self.update_progress()
-        else:
-            # Review session complete
-            self.review_finished.emit()
+        # Track review sequence for proper Anki-style interleaving
+        if not hasattr(self, 'card_review_sequence'):
+            self.card_review_sequence = []
+        self.card_review_sequence.append(card_id)
+        
+        # Track the note ID to prevent sibling cards from appearing immediately
+        if hasattr(self, 'current_card') and self.current_card:
+            self.last_reviewed_note_id = self.current_card.get('note_id')
+        
+        # Keep only recent reviews (last 10) to prevent memory buildup
+        if len(self.card_review_sequence) > 10:
+            self.card_review_sequence = self.card_review_sequence[-10:]
+        
+        # Emit signal (triggers dynamic queue rebuild in main.py)
+        self.card_rated.emit(card_id, rating, answer_ms)
+        
+        # Note: next card selection now handled by update_session_queue()
+        # Update counters immediately after rating
+        self.update_progress()
             
     def update_progress(self):
-        """Update progress display."""
-        if hasattr(self, 'cards') and self.cards:
-            current = self.current_card_index + 1
-            total = len(self.cards)
-            self.progress_label.setText(f"Card {current} of {total}")
-            self.progress_bar.setMaximum(total)
-            self.progress_bar.setValue(current)
-        else:
-            self.progress_label.setText("No cards")
-            self.progress_bar.setValue(0)
+        """Update Anki-style counters (remaining cards in each category)."""
+        if not self.cards:
+            self.anki_counters.setText("New: 0 • Learning: 0 • Review: 0")
+            return
+            
+        # Count card types in ENTIRE current session queue
+        # This represents what's still available to review
+        new_count = sum(1 for c in self.cards if c['state'] == 'new')
+        learning_count = sum(1 for c in self.cards if c['state'] == 'learning')
+        review_count = sum(1 for c in self.cards if c['state'] == 'review')
+        
+        # Anki-style display: Shows remaining cards in each category
+        counter_text = f"New: {new_count} • Learning: {learning_count} • Review: {review_count}"
+        self.anki_counters.setText(counter_text)
+        # Old progress system removed - using Anki counters only
             
     def show_completion(self):
         """Show review completion screen."""
         # Hide all review elements
         self.back_widget.hide()
-        self.missed_button.hide()
-        self.almost_button.hide() 
-        self.got_it_button.hide()
+        self.again_button.hide()
+        self.hard_button.hide()
+        self.good_button.hide()
+        self.easy_button.hide()
         self.show_answer_button.hide()
         
         # Show completion message
         self.front_label.setText("🎉 All Reviews Complete!\n\nGreat job! Come back tomorrow for more cards.")
         self.front_label.setStyleSheet("QLabel { color: #27ae60; padding: 40px; text-align: center; }")
         
-        # Update progress to show completion
-        if hasattr(self, 'cards') and self.cards:
-            total = len(self.cards)
-            self.progress_label.setText(f"Completed {total} cards")
-            self.progress_bar.setValue(total)
-        else:
-            self.progress_label.setText("Session complete")
+        # Update final counters
+        self.anki_counters.setText("🎉 Session Complete!")
             
         # User can manually click back button to return home
     

@@ -128,7 +128,7 @@ class PerformanceTester:
         print("Testing with extreme interval (10000 days) and ease (5.0)...")
         
         # Rate as GOT_IT
-        self.scheduler.review(card_id, Rating.GOT_IT, 3000, int(time.time()))
+        self.scheduler.review(card_id, Rating.GOOD, 3000, int(time.time()))
         
         # Check result
         updated_card = self.db.conn.execute(
@@ -168,7 +168,7 @@ class PerformanceTester:
         
         # Rate as MISSED multiple times
         for i in range(5):
-            self.scheduler.review(card_id, Rating.MISSED, 5000, int(time.time()))
+            self.scheduler.review(card_id, Rating.AGAIN, 5000, int(time.time()))
             card = self.db.conn.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
             print(f"After lapse {i+1}: ease = {card['ease']}")
             
@@ -201,7 +201,7 @@ class PerformanceTester:
         # Perform 10 rapid reviews
         print("Performing 10 rapid reviews...")
         for i in range(10):
-            rating = random.choice([Rating.ALMOST, Rating.GOT_IT])
+            rating = random.choice([Rating.HARD, Rating.GOOD])
             self.scheduler.review(card_id, rating, 1000 + i * 100, now + i)
         
         # Check that all reviews were logged

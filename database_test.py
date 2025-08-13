@@ -83,7 +83,7 @@ class DatabaseConsistencyTester:
         
         now = int(time.time())
         answer_ms = 4500
-        rating = Rating.GOT_IT
+        rating = Rating.GOOD
         
         print(f"Initial card state: {initial_state['state']}, interval: {initial_state['interval_days']}")
         
@@ -142,19 +142,19 @@ class DatabaseConsistencyTester:
         print(f"Initial: {initial}")
         
         # Rate as GOT_IT (new -> learning step 1)
-        self.scheduler.review(card_id, Rating.GOT_IT, 3000, now)
+        self.scheduler.review(card_id, Rating.GOOD, 3000, now)
         after_first = record_state()
         print(f"After GOT_IT: {after_first}")
         
         # Advance time and rate again (learning -> review)
         now += 1440 * 60  # 1 day
-        self.scheduler.review(card_id, Rating.GOT_IT, 2500, now)
+        self.scheduler.review(card_id, Rating.GOOD, 2500, now)
         after_graduation = record_state()
         print(f"After graduation: {after_graduation}")
         
         # Rate as MISSED (review -> learning, lapse)
         now += 24 * 3600  # 1 day
-        self.scheduler.review(card_id, Rating.MISSED, 6000, now)
+        self.scheduler.review(card_id, Rating.AGAIN, 6000, now)
         after_lapse = record_state()
         print(f"After lapse: {after_lapse}")
         
@@ -219,13 +219,13 @@ class DatabaseConsistencyTester:
         now = int(time.time())
         
         # First review
-        self.scheduler.review(card_id, Rating.GOT_IT, 3000, now)
+        self.scheduler.review(card_id, Rating.GOOD, 3000, now)
         
         # Get state after first review
         card1 = self.db.conn.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
         
         # Try to do another review with same timestamp (should update from current state)
-        self.scheduler.review(card_id, Rating.ALMOST, 4000, now)
+        self.scheduler.review(card_id, Rating.HARD, 4000, now)
         
         # Get final state
         card2 = self.db.conn.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
@@ -258,9 +258,9 @@ class DatabaseConsistencyTester:
         now = int(time.time())
         
         # Review each card differently
-        self.scheduler.review(cards[0], Rating.MISSED, 5000, now)
-        self.scheduler.review(cards[1], Rating.ALMOST, 3500, now) 
-        self.scheduler.review(cards[2], Rating.GOT_IT, 2000, now)
+        self.scheduler.review(cards[0], Rating.AGAIN, 5000, now)
+        self.scheduler.review(cards[1], Rating.HARD, 3500, now) 
+        self.scheduler.review(cards[2], Rating.GOOD, 2000, now)
         
         # Close and reopen database connections
         self.scheduler.db.close()
@@ -280,7 +280,7 @@ class DatabaseConsistencyTester:
             assert card is not None, f"Card {i} not found after reconnect"
             assert log is not None, f"Log for card {i} not found after reconnect"
             
-            expected_ratings = [Rating.MISSED, Rating.ALMOST, Rating.GOT_IT]
+            expected_ratings = [Rating.AGAIN, Rating.HARD, Rating.GOOD]
             assert log['rating'] == expected_ratings[i].value, f"Rating mismatch for card {i}"
         
         print("✅ Data persistence verified")
